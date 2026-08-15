@@ -6,6 +6,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 
 const PORT = 8799;
 const MCP_URL = new URL(`http://127.0.0.1:${PORT}/mcp`);
+const RESOURCE_URI = "ui://widget/human-review/v2.html";
 
 function startServer() {
   const child = spawn(process.execPath, ["server.js"], {
@@ -34,19 +35,23 @@ function startServer() {
   return { child, ready };
 }
 
-test("MCP review loop works end to end", { timeout: 30_000 }, async (t) => {
+test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 }, async (t) => {
   const { child, ready } = startServer();
   t.after(() => {
     if (!child.killed) child.kill("SIGTERM");
   });
   await ready;
 
-  const client = new Client({ name: "human-review-integration-test", version: "0.1.0" });
+  const client = new Client({ name: "human-review-integration-test", version: "0.2.0" });
   const transport = new StreamableHTTPClientTransport(MCP_URL);
   await client.connect(transport);
   t.after(async () => {
     await client.close().catch(() => {});
   });
+
+  assert.equal(client.getServerVersion()?.version, "0.2.0");
+  assert.match(client.getInstructions() ?? "", /create_review/);
+  assert.match(client.getInstructions() ?? "", /user_edited_html/);
 
   const listed = await client.listTools();
   assert.deepEqual(
@@ -60,6 +65,22 @@ test("MCP review loop works end to end", { timeout: 30_000 }, async (t) => {
       "submit_review",
     ],
   );
+
+  const openTool = listed.tools.find((tool) => tool.name === "open_review");
+  const saveTool = listed.tools.find((tool) => tool.name === "save_review_draft");
+  const submitTool = listed.tools.find((tool) => tool.name === "submit_review");
+  assert.equal(openTool?._meta?.ui?.resourceUri, RESOURCE_URI);
+  assert.equal(openTool?._meta?.["openai/outputTemplate"], RESOURCE_URI);
+  assert.deepEqual(saveTool?._meta?.ui?.visibility, ["app"]);
+  assert.deepEqual(submitTool?._meta?.ui?.visibility, ["app"]);
+  assert.equal(saveTool?._meta?.["openai/visibility"], "private");
+  assert.equal(submitTool?._meta?.["openai/visibility"], "private");
+
+  const resources = await client.listResources();
+  assert.ok(resources.resources.some((resource) => resource.uri === RESOURCE_URI));
+  const resource = await client.readResource({ uri: RESOURCE_URI });
+  assert.equal(resource.contents[0]?.mimeType, "text/html;profile=mcp-app");
+  assert.match(resource.contents[0]?.text ?? "", /Human Review/);
 
   const created = await client.callTool({
     name: "create_review",
