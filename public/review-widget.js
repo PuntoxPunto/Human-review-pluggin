@@ -52,8 +52,8 @@ window.addEventListener("message", (event) => {
 const bridgeReady = (async () => {
   try {
     await rpcRequest("ui/initialize", {
-      appInfo: { name: "human-review-widget", version: "0.1.0" },
-      appCapabilities: {},
+      appInfo: { name: "human-review-widget", version: "0.2.0" },
+      appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
       protocolVersion: "2026-01-26",
     });
     rpcNotify("ui/notifications/initialized", {});
@@ -380,7 +380,12 @@ async function submitReview() {
 $("desktop").addEventListener("click", () => device.classList.remove("mobile"));
 $("mobile").addEventListener("click", () => device.classList.add("mobile"));
 $("fullscreen").addEventListener("click", async () => {
-  if (window.openai?.requestDisplayMode) await window.openai.requestDisplayMode({ mode: "fullscreen" });
+  try {
+    await bridgeReady;
+    await rpcRequest("ui/request-display-mode", { mode: "fullscreen" });
+  } catch (error) {
+    if (window.openai?.requestDisplayMode) await window.openai.requestDisplayMode({ mode: "fullscreen" });
+  }
 });
 $("commentSelection").addEventListener("click", () => openComposer("selection"));
 $("commentBlock").addEventListener("click", () => openComposer("element"));
