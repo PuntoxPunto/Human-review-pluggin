@@ -11,6 +11,7 @@ import { z } from "zod";
 import { ReviewStore } from "./src/store.js";
 
 const TEMPLATE_URI = "ui://widget/human-review.html";
+const STORE_MODE = "memory-ephemeral";
 const store = new ReviewStore();
 const widgetShell = readFileSync(new URL("./public/review-widget.html", import.meta.url), "utf8");
 const widgetScript = readFileSync(new URL("./public/review-widget.js", import.meta.url), "utf8");
@@ -228,7 +229,6 @@ function createMcpServer() {
           csp: {
             connectDomains: [],
             resourceDomains: [],
-            frameDomains: ["https://web-sandbox.oaiusercontent.com"],
           },
         },
         "openai/widgetDescription": "Visual HTML editor for direct human edits, anchored comments, block movement, deletion, responsive preview, and submitting one feedback batch to ChatGPT.",
@@ -251,20 +251,32 @@ const httpServer = createHttpServer(async (req, res) => {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "content-type, mcp-session-id",
+      "Access-Control-Allow-Headers": "content-type, authorization, mcp-session-id, mcp-protocol-version, last-event-id",
       "Access-Control-Expose-Headers": "Mcp-Session-Id",
+      "Access-Control-Max-Age": "86400",
     });
     return res.end();
   }
 
-  if (req.method === "GET" && url.pathname === "/") {
-    res.writeHead(200, { "content-type": "application/json" });
-    return res.end(JSON.stringify({ name: "human-review-chatgpt", version: "0.1.0", mcp: MCP_PATH }));
+  if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/health")) {
+    res.writeHead(200, {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+    });
+    return res.end(JSON.stringify({
+      ok: true,
+      name: "human-review-chatgpt",
+      version: "0.1.0",
+      mcp: MCP_PATH,
+      storage: STORE_MODE,
+      warning: STORE_MODE === "memory-ephemeral" ? "Review sessions reset when the server process restarts." : undefined,
+    }));
   }
 
   if (url.pathname === MCP_PATH && ["POST", "GET", "DELETE"].includes(req.method ?? "")) {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
+    res.setHeader("Cache-Control", "no-store");
     const server = createMcpServer();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => { transport.close(); server.close(); });
