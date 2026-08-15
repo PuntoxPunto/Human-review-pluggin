@@ -1,0 +1,19 @@
+version: 1
+
+packs:
+  core:
+    description: Identidad y estado actual del proyecto.
+    sources:
+      - .punto/context/identity.md
+      - .punto/context/current-state.md
+
+  architecture:
+    description: Core más arquitectura del proyecto.
+    includes: [core]
+    sources:
+      - .punto/context/architecture.md
+
+  project:
+    description: Contexto completo mínimo de Human Review.
+    includes: [core, architecture]
+    sources: []
