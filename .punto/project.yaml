@@ -1,0 +1,9 @@
+schema_version: 1
+project_id: human-review
+name: Human Review
+repository: PuntoxPunto/Human-review-pluggin
+canonical_ref: main
+project_type: chatgpt-plugin
+context_map: .punto/context-map.yaml
+pack_root: .punto/
+identity_node_id: human-review-identity
