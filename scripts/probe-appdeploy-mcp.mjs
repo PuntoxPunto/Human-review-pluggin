@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 const publicEndpoint = 'https://human-review-mcp-test-u1t0ev.v2.appdeploy.ai/api/mcp';
 const apiEndpoint = 'https://api-v2.appdeploy.ai/app/human-review-mcp-test-u1t0ev/api/mcp';
 const modernVersion = '2026-07-28';
-const widgetUri = 'ui://widget/human-review/v4.html';
+const widgetUri = 'ui://widget/human-review/v5.html';
 
 async function rawPost(endpoint, method, { name = '', params = {}, modern = true } = {}) {
   const headers = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
@@ -34,6 +34,7 @@ async function callTool(name, args) {
   const result = await rawPost(apiEndpoint, 'tools/call', { name, params: { name, arguments: args } });
   assert.equal(result.response.status, 200, `${name} returned HTTP ${result.response.status}`);
   assert.ok(!result.json?.error, `${name} returned JSON-RPC error: ${JSON.stringify(result.json?.error)}`);
+  assert.ok(!result.json?.result?.isError, `${name} returned tool error: ${JSON.stringify(result.json?.result?.content)}`);
   return result.json.result;
 }
 
@@ -48,7 +49,7 @@ console.log(`PUBLIC POST BLOCKED=${publicPost.response.status === 403}`);
 const apiDiscover = await rawPost(apiEndpoint, 'server/discover');
 if (apiDiscover.response.status === 200) {
   assert.ok(apiDiscover.json?.result?.supportedVersions?.includes(modernVersion));
-  assert.equal(apiDiscover.json?.result?._meta?.['io.modelcontextprotocol/serverInfo']?.version, '0.4.0');
+  assert.equal(apiDiscover.json?.result?._meta?.['io.modelcontextprotocol/serverInfo']?.version, '0.5.0');
 
   const tools = await rawPost(apiEndpoint, 'tools/list');
   assert.equal(tools.response.status, 200);
