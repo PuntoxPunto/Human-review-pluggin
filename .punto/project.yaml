@@ -6,3 +6,4 @@ canonical_ref: main
 project_type: chatgpt-plugin
 context_map: .punto/context-map.yaml
 pack_root: .punto/
+identity_node_id: human-review-identity
