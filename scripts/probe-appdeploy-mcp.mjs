@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 const endpoint = 'https://human-review-mcp-test-u1t0ev.v2.appdeploy.ai/api/mcp';
 const modernVersion = '2026-07-28';
 const widgetUri = 'ui://widget/human-review/v4.html';
+const diagnostics = [];
 
 async function request(method, { name = '', params = {}, modern = true } = {}) {
   const headers = {
@@ -36,8 +37,10 @@ async function request(method, { name = '', params = {}, modern = true } = {}) {
 }
 
 const get = await fetch(endpoint, { method: 'GET', headers: { accept: 'application/json, text/event-stream' } });
-console.log(`GET: HTTP ${get.status}; allow=${get.headers.get('allow')}`);
-assert.equal(get.status, 405);
+const getText = await get.text();
+console.log(`GET: HTTP ${get.status}; allow=${get.headers.get('allow')}; content-type=${get.headers.get('content-type')}`);
+console.log(getText.slice(0, 1000));
+if (get.status !== 405) diagnostics.push(`PUBLIC_GET_REWRITE: expected 405 from backend, got ${get.status}`);
 
 const discover = await request('server/discover');
 assert.equal(discover.response.status, 200);
@@ -68,4 +71,9 @@ const legacy = await request('initialize', {
 assert.equal(legacy.response.status, 200);
 assert.equal(legacy.json?.result?.protocolVersion, '2025-11-25');
 
-console.log('\nExternal AppDeploy MCP probe PASSED.');
+console.log('\nExternal AppDeploy MCP POST probe PASSED.');
+if (diagnostics.length) {
+  console.error('\nIngress diagnostics:');
+  for (const item of diagnostics) console.error('-', item);
+  process.exitCode = 2;
+}
