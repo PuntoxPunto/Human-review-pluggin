@@ -27,3 +27,6 @@ jobs:
 
       - name: Unit and MCP integration tests
         run: npm test
+
+      - name: External AppDeploy MCP transport probe
+        run: node scripts/probe-appdeploy-mcp.mjs
