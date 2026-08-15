@@ -10,8 +10,15 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { ReviewStore } from "./src/store.js";
 
-const TEMPLATE_URI = "ui://widget/human-review.html";
+const TEMPLATE_URI = "ui://widget/human-review/v2.html";
 const STORE_MODE = "memory-ephemeral";
+const NOAUTH = [{ type: "noauth" }];
+const SERVER_INSTRUCTIONS = [
+  "When the user asks to visually review HTML, call create_review with the complete HTML, then open_review.",
+  "When Human Review sends a feedback batch, call get_review_feedback and treat user_edited_html as the source of truth.",
+  "Preserve direct human edits exactly unless an explicit user comment asks to change them.",
+  "Call apply_review, resolve any direct-edit conflict, then call open_review again.",
+].join(" ");
 const store = new ReviewStore();
 const widgetShell = readFileSync(new URL("./public/review-widget.html", import.meta.url), "utf8");
 const widgetScript = readFileSync(new URL("./public/review-widget.js", import.meta.url), "utf8");
@@ -74,8 +81,14 @@ function registerTools(server) {
       html: z.string().min(1).max(2_000_000),
     },
     outputSchema: summaryOutput,
+    securitySchemes: NOAUTH,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
-    _meta: { ui: { visibility: ["model"] } },
+    _meta: {
+      securitySchemes: NOAUTH,
+      ui: { visibility: ["model"] },
+      "openai/toolInvocation/invoking": "Creating review…",
+      "openai/toolInvocation/invoked": "Review created",
+    },
   }, async ({ title, html }) => {
     const review = store.create({ title, html });
     return reply(review, `Created Human Review ${review.id}. Open it for visual editing.`);
@@ -86,9 +99,12 @@ function registerTools(server) {
     description: "Use this after create_review, or after apply_review, to render the Human Review visual editor for an existing review ID.",
     inputSchema: { review_id: z.string().min(1) },
     outputSchema: summaryOutput,
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    securitySchemes: NOAUTH,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     _meta: {
+      securitySchemes: NOAUTH,
       ui: { resourceUri: TEMPLATE_URI, visibility: ["model"] },
+      "openai/outputTemplate": TEMPLATE_URI,
       "openai/toolInvocation/invoking": "Opening visual review…",
       "openai/toolInvocation/invoked": "Visual review ready",
     },
@@ -116,8 +132,14 @@ function registerTools(server) {
       comments: z.array(commentSchema).max(500),
     },
     outputSchema: summaryOutput,
+    securitySchemes: NOAUTH,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
-    _meta: { ui: { visibility: ["app"] } },
+    _meta: {
+      securitySchemes: NOAUTH,
+      ui: { visibility: ["app"] },
+      "openai/widgetAccessible": true,
+      "openai/visibility": "private",
+    },
   }, async ({ review_id, draft_html, edits, comments }) => {
     const review = store.saveDraft(review_id, { draftHtml: draft_html, edits, comments });
     return reply(review, "Draft saved.");
@@ -137,8 +159,14 @@ function registerTools(server) {
       batch_id: z.string(),
       status: z.string(),
     },
+    securitySchemes: NOAUTH,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
-    _meta: { ui: { visibility: ["app"] } },
+    _meta: {
+      securitySchemes: NOAUTH,
+      ui: { visibility: ["app"] },
+      "openai/widgetAccessible": true,
+      "openai/visibility": "private",
+    },
   }, async ({ review_id, draft_html, edits, comments }) => {
     const review = store.submit(review_id, { draftHtml: draft_html, edits, comments });
     return {
@@ -159,8 +187,12 @@ function registerTools(server) {
       edits: z.array(editSchema),
       comments: z.array(commentSchema),
     },
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-    _meta: { ui: { visibility: ["model"] } },
+    securitySchemes: NOAUTH,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+    _meta: {
+      securitySchemes: NOAUTH,
+      ui: { visibility: ["model"] },
+    },
   }, async ({ review_id, batch_id }) => {
     const batch = store.feedback(review_id, batch_id);
     return {
@@ -192,8 +224,14 @@ function registerTools(server) {
       source_version: z.number().int(),
       conflicts: z.array(z.string()),
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
-    _meta: { ui: { visibility: ["model"] } },
+    securitySchemes: NOAUTH,
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: false },
+    _meta: {
+      securitySchemes: NOAUTH,
+      ui: { visibility: ["model"] },
+      "openai/toolInvocation/invoking": "Applying review…",
+      "openai/toolInvocation/invoked": "Review applied",
+    },
   }, async ({ review_id, batch_id, html, overridden_edit_ids }) => {
     const result = store.apply(review_id, { batchId: batch_id, html, overriddenEditIds: overridden_edit_ids });
     const review = result.review;
@@ -216,9 +254,12 @@ function registerTools(server) {
 }
 
 function createMcpServer() {
-  const server = new McpServer({ name: "human-review-chatgpt", version: "0.1.0" });
+  const server = new McpServer(
+    { name: "human-review-chatgpt", version: "0.2.0" },
+    { instructions: SERVER_INSTRUCTIONS },
+  );
 
-  registerAppResource(server, "human-review-widget", TEMPLATE_URI, {}, async () => ({
+  registerAppResource(server, "human-review-widget", TEMPLATE_URI, { mimeType: RESOURCE_MIME_TYPE }, async () => ({
     contents: [{
       uri: TEMPLATE_URI,
       mimeType: RESOURCE_MIME_TYPE,
@@ -266,7 +307,7 @@ const httpServer = createHttpServer(async (req, res) => {
     return res.end(JSON.stringify({
       ok: true,
       name: "human-review-chatgpt",
-      version: "0.1.0",
+      version: "0.2.0",
       mcp: MCP_PATH,
       storage: STORE_MODE,
       warning: STORE_MODE === "memory-ephemeral" ? "Review sessions reset when the server process restarts." : undefined,
