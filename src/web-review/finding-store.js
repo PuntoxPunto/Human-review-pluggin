@@ -9,7 +9,6 @@ function fingerprint(finding) {
     type: finding.type,
     target: finding.target?.path || finding.target?.selector || null,
     related: finding.related?.path || finding.related?.selector || null,
-    metrics: finding.metrics || {},
   });
   return `fp_${createHash("sha256").update(stable).digest("hex").slice(0, 20)}`;
 }
