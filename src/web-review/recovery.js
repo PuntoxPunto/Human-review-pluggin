@@ -1,7 +1,12 @@
 const INTERACTIVE_TAGS = new Set(["button", "a", "input", "select", "textarea", "summary"]);
 
 function normalize(value) {
-  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function tokens(value) {
