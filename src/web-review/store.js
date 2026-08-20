@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createStateMap, persistStateMapEntry } from "../state-map.js";
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -13,7 +14,7 @@ function normalizeViewport(viewport = {}) {
 }
 
 export class WebReviewStore {
-  #reviews = new Map();
+  #reviews = createStateMap("web-reviews");
 
   create({ title, url, viewport }) {
     const now = new Date().toISOString();
@@ -52,6 +53,7 @@ export class WebReviewStore {
     review.runs.push(run);
     review.status = "running";
     review.updatedAt = run.startedAt;
+    persistStateMapEntry(this.#reviews, id);
     return clone(run);
   }
 
@@ -65,6 +67,7 @@ export class WebReviewStore {
     review.status = "reviewing";
     this.#appendEvidence(review, evidenceId);
     review.updatedAt = run.completedAt;
+    persistStateMapEntry(this.#reviews, id);
     return clone(review);
   }
 
@@ -73,6 +76,7 @@ export class WebReviewStore {
     this.#appendEvidence(review, evidenceId);
     review.status = "reviewing";
     review.updatedAt = new Date().toISOString();
+    persistStateMapEntry(this.#reviews, id);
     return clone(review);
   }
 
@@ -85,6 +89,7 @@ export class WebReviewStore {
     run.completedAt = new Date().toISOString();
     review.status = "error";
     review.updatedAt = run.completedAt;
+    persistStateMapEntry(this.#reviews, id);
     return clone(review);
   }
 
