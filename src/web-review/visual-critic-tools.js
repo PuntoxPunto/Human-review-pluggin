@@ -1,5 +1,6 @@
 import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import { z } from "zod";
+import { analyzeGeometry } from "./geometry.js";
 
 const NOAUTH = [{ type: "noauth" }];
 const rectSchema = z.object({
@@ -158,6 +159,14 @@ export function registerWebVisualCriticTools(server, { reviewStore, evidenceStor
   }, async ({ evidence_id, findings }) => {
     const evidence = evidenceStore.get(evidence_id);
     reviewStore.get(evidence.reviewId);
+    if (!findingStore.list(evidence_id, { source: "deterministic" }).length) {
+      findingStore.replaceForEvidence({
+        reviewId: evidence.reviewId,
+        evidenceId: evidence_id,
+        findings: analyzeGeometry(evidence),
+        source: "deterministic",
+      });
+    }
     const normalized = findings.map((proposal) => buildVisualFinding(evidence, proposal));
     const stored = findingStore.replaceForEvidence({
       reviewId: evidence.reviewId,
