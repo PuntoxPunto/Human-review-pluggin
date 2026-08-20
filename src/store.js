@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { sanitizeReviewHtml, stripTags } from "./sanitize.js";
+import { createStateMap, persistStateMapEntry } from "./state-map.js";
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
 export class ReviewStore {
-  #reviews = new Map();
+  #reviews = createStateMap("human-reviews");
 
   create({ title, html }) {
     const now = new Date().toISOString();
@@ -43,6 +44,7 @@ export class ReviewStore {
     review.draftVersion += 1;
     review.status = "editing";
     review.updatedAt = new Date().toISOString();
+    persistStateMapEntry(this.#reviews, id);
     return clone(review);
   }
 
@@ -63,6 +65,7 @@ export class ReviewStore {
     };
     review.status = "feedback_pending";
     review.updatedAt = new Date().toISOString();
+    persistStateMapEntry(this.#reviews, id);
     return clone(review);
   }
 
@@ -105,6 +108,7 @@ export class ReviewStore {
     review.comments = [];
     review.pendingBatch = null;
     review.updatedAt = new Date().toISOString();
+    persistStateMapEntry(this.#reviews, id);
     return { ok: true, conflicts: [], review: clone(review) };
   }
 
