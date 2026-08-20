@@ -43,14 +43,14 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   });
   await ready;
 
-  const client = new Client({ name: "human-review-integration-test", version: "0.6.0" });
+  const client = new Client({ name: "human-review-integration-test", version: "0.7.0" });
   const transport = new StreamableHTTPClientTransport(MCP_URL);
   await client.connect(transport);
   t.after(async () => {
     await client.close().catch(() => {});
   });
 
-  assert.equal(client.getServerVersion()?.version, "0.6.0");
+  assert.equal(client.getServerVersion()?.version, "0.7.0");
   assert.match(client.getInstructions() ?? "", /create_review/);
   assert.match(client.getInstructions() ?? "", /create_web_review/);
   assert.match(client.getInstructions() ?? "", /open_web_review/);
@@ -60,6 +60,8 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   assert.match(client.getInstructions() ?? "", /run_web_action/);
   assert.match(client.getInstructions() ?? "", /match exactly one element/);
   assert.match(client.getInstructions() ?? "", /before and after evidence/);
+  assert.match(client.getInstructions() ?? "", /run_web_scroll_checkpoints/);
+  assert.match(client.getInstructions() ?? "", /center_offset_px/);
   assert.match(client.getInstructions() ?? "", /user_edited_html/);
 
   const listed = await client.listTools();
@@ -75,9 +77,11 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
       "get_web_action_run",
       "get_web_evidence",
       "get_web_findings",
+      "get_web_scroll_run",
       "open_review",
       "open_web_review",
       "run_web_action",
+      "run_web_scroll_checkpoints",
       "save_review_draft",
       "set_web_finding_decision",
       "submit_review",
@@ -93,6 +97,8 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   const findingsTool = listed.tools.find((tool) => tool.name === "get_web_findings");
   const actionTool = listed.tools.find((tool) => tool.name === "run_web_action");
   const actionRunTool = listed.tools.find((tool) => tool.name === "get_web_action_run");
+  const scrollTool = listed.tools.find((tool) => tool.name === "run_web_scroll_checkpoints");
+  const scrollRunTool = listed.tools.find((tool) => tool.name === "get_web_scroll_run");
   assert.equal(openTool?._meta?.ui?.resourceUri, HUMAN_RESOURCE_URI);
   assert.equal(openTool?._meta?.["openai/outputTemplate"], HUMAN_RESOURCE_URI);
   assert.equal(webOpenTool?._meta?.ui?.resourceUri, WEB_RESOURCE_URI);
@@ -106,10 +112,15 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   assert.deepEqual(findingsTool?._meta?.ui?.visibility, ["model"]);
   assert.deepEqual(actionTool?._meta?.ui?.visibility, ["model"]);
   assert.deepEqual(actionRunTool?._meta?.ui?.visibility, ["model"]);
+  assert.deepEqual(scrollTool?._meta?.ui?.visibility, ["model"]);
+  assert.deepEqual(scrollRunTool?._meta?.ui?.visibility, ["model"]);
   assert.equal(captureTool?.annotations?.openWorldHint, true);
   assert.equal(captureTool?.annotations?.readOnlyHint, false);
   assert.equal(actionTool?.annotations?.openWorldHint, true);
   assert.equal(actionTool?.annotations?.readOnlyHint, false);
+  assert.equal(scrollTool?.annotations?.openWorldHint, true);
+  assert.equal(scrollTool?.annotations?.readOnlyHint, false);
+  assert.equal(scrollRunTool?.annotations?.readOnlyHint, true);
 
   const resources = await client.listResources();
   assert.ok(resources.resources.some((resource) => resource.uri === HUMAN_RESOURCE_URI));
