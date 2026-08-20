@@ -4,8 +4,13 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function fingerprint({ reviewId, targetUrl, failedLocator }) {
-  const stable = JSON.stringify({ reviewId, targetUrl, failedLocator: failedLocator || null });
+function fingerprint({ reviewId, targetUrl, targetHint, failedLocator }) {
+  const stable = JSON.stringify({
+    reviewId,
+    targetUrl,
+    targetHint: String(targetHint || "").trim().toLowerCase(),
+    failedLocator: failedLocator || null,
+  });
   return `rfp_${createHash("sha256").update(stable).digest("hex").slice(0, 20)}`;
 }
 
@@ -14,7 +19,7 @@ export class RecoveryRecipeStore {
   #byFingerprint = new Map();
 
   save({ reviewId, targetUrl, targetHint = "", failedLocator = null, verifiedLocator, resolvedLocator, evidenceId }) {
-    const recipeFingerprint = fingerprint({ reviewId, targetUrl, failedLocator });
+    const recipeFingerprint = fingerprint({ reviewId, targetUrl, targetHint, failedLocator });
     const priorId = this.#byFingerprint.get(recipeFingerprint);
     const now = new Date().toISOString();
     const prior = priorId ? this.#recipes.get(priorId) : null;
