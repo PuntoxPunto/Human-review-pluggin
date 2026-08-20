@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { createStateMap, persistStateMapEntry } from "../state-map.js";
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -20,7 +21,7 @@ function fingerprint(finding) {
 }
 
 export class FindingStore {
-  #byEvidence = new Map();
+  #byEvidence = createStateMap("web-findings");
 
   replaceForEvidence({ reviewId, evidenceId, findings, source = "deterministic" }) {
     const previous = this.#byEvidence.get(evidenceId) || [];
@@ -83,6 +84,7 @@ export class FindingStore {
         createdAt: now,
       });
     }
+    persistStateMapEntry(this.#byEvidence, evidenceId);
     return clone(finding);
   }
 
