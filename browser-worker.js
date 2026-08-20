@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { BrowserRunner } from "./src/web-review/browser-runner.js";
+import { runBrowserJobProcess } from "./src/web-review/browser-job-process.js";
 
 const TOKEN = String(process.env.BROWSER_WORKER_TOKEN || "");
 if (TOKEN.length < 16) throw new Error("BROWSER_WORKER_TOKEN of at least 16 characters is required.");
@@ -9,10 +9,11 @@ const PORT = Number(process.env.PORT || process.env.BROWSER_WORKER_PORT || 8890)
 const MAX_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.BROWSER_WORKER_MAX_CONCURRENCY || 2)));
 const MAX_BODY_BYTES = Math.max(16_384, Math.min(1_048_576, Number(process.env.BROWSER_WORKER_MAX_BODY_BYTES || 524_288)));
 const MAX_OPERATION_TIMEOUT_MS = Math.max(5_000, Math.min(120_000, Number(process.env.BROWSER_WORKER_MAX_OPERATION_TIMEOUT_MS || 45_000)));
+const HARD_JOB_TIMEOUT_MS = Math.max(1_000, Math.min(180_000, Number(process.env.BROWSER_WORKER_HARD_JOB_TIMEOUT_MS || 60_000)));
+const MAX_JOB_OUTPUT_BYTES = Math.max(1_048_576, Math.min(64 * 1024 * 1024, Number(process.env.BROWSER_WORKER_MAX_JOB_OUTPUT_BYTES || 24 * 1024 * 1024)));
 const MAX_REQUESTS_PER_MINUTE = Math.max(1, Math.min(10_000, Number(process.env.BROWSER_WORKER_MAX_REQUESTS_PER_MINUTE || 60)));
 const ALLOW_PRIVATE = process.env.BROWSER_WORKER_ALLOW_PRIVATE === "true";
 const OPERATIONS = new Set(["capture", "runAction", "runScrollCheckpoints", "runScenario"]);
-const runner = new BrowserRunner({ allowPrivateTargets: ALLOW_PRIVATE });
 let activeJobs = 0;
 let rateWindowStartedAt = Date.now();
 let rateWindowCount = 0;
@@ -20,6 +21,7 @@ const metrics = {
   jobsStarted: 0,
   jobsSucceeded: 0,
   jobsFailed: 0,
+  hardTimeouts: 0,
   rejectedAuth: 0,
   rejectedRate: 0,
   rejectedConcurrency: 0,
@@ -97,6 +99,8 @@ function prometheusMetrics() {
     `web_review_browser_jobs_succeeded_total ${metrics.jobsSucceeded}`,
     "# TYPE web_review_browser_jobs_failed_total counter",
     `web_review_browser_jobs_failed_total ${metrics.jobsFailed}`,
+    "# TYPE web_review_browser_hard_timeouts_total counter",
+    `web_review_browser_hard_timeouts_total ${metrics.hardTimeouts}`,
     "# TYPE web_review_browser_rejected_total counter",
     `web_review_browser_rejected_total{reason=\"auth\"} ${metrics.rejectedAuth}`,
     `web_review_browser_rejected_total{reason=\"rate\"} ${metrics.rejectedRate}`,
@@ -122,9 +126,11 @@ const server = createServer(async (req, res) => {
       active_jobs: activeJobs,
       max_concurrency: MAX_CONCURRENCY,
       max_requests_per_minute: MAX_REQUESTS_PER_MINUTE,
+      hard_job_timeout_ms: HARD_JOB_TIMEOUT_MS,
       target_policy: ALLOW_PRIVATE ? "private-allowed-test-mode" : "public-http-only",
+      execution_model: "child-process-per-job",
       operations: [...OPERATIONS],
-      totals: { started: metrics.jobsStarted, succeeded: metrics.jobsSucceeded, failed: metrics.jobsFailed },
+      totals: { started: metrics.jobsStarted, succeeded: metrics.jobsSucceeded, failed: metrics.jobsFailed, hard_timeouts: metrics.hardTimeouts },
     }, id);
   }
   if (req.method === "GET" && url.pathname === "/metrics") {
@@ -156,6 +162,7 @@ const server = createServer(async (req, res) => {
   activeJobs += 1;
   const startedAt = Date.now();
   let operation = "unknown";
+  let outcome = "rejected";
   try {
     const body = await readJson(req);
     operation = String(body.operation || "");
@@ -164,11 +171,20 @@ const server = createServer(async (req, res) => {
     metrics.byOperation[operation] += 1;
     log("job_started", { request_id: id, operation, active_jobs: activeJobs });
     const payload = boundedPayload(body.payload);
-    const result = await runner[operation](payload);
+    const result = await runBrowserJobProcess({
+      operation,
+      payload,
+      allowPrivate: ALLOW_PRIVATE,
+      hardTimeoutMs: HARD_JOB_TIMEOUT_MS,
+      maxOutputBytes: MAX_JOB_OUTPUT_BYTES,
+    });
     metrics.jobsSucceeded += 1;
+    outcome = "succeeded";
     return json(res, 200, { ok: true, result }, id);
   } catch (error) {
     metrics.jobsFailed += 1;
+    if (error?.code === "BROWSER_JOB_HARD_TIMEOUT") metrics.hardTimeouts += 1;
+    outcome = error?.code === "BROWSER_JOB_HARD_TIMEOUT" ? "hard_timeout" : "failed";
     const status = Number(error?.statusCode || 500);
     const safeStatus = status >= 400 && status < 600 ? status : 500;
     return json(res, safeStatus, { ok: false, error: String(error?.message || error || "Browser worker error").slice(0, 2000) }, id);
@@ -176,10 +192,17 @@ const server = createServer(async (req, res) => {
     const durationMs = Date.now() - startedAt;
     metrics.totalDurationMs += durationMs;
     activeJobs -= 1;
-    log("job_finished", { request_id: id, operation, duration_ms: durationMs, active_jobs: activeJobs });
+    log("job_finished", { request_id: id, operation, outcome, duration_ms: durationMs, active_jobs: activeJobs });
   }
 });
 
 server.listen(PORT, () => {
-  log("worker_started", { port: PORT, max_concurrency: MAX_CONCURRENCY, max_requests_per_minute: MAX_REQUESTS_PER_MINUTE, target_policy: ALLOW_PRIVATE ? "private-allowed-test-mode" : "public-http-only" });
+  log("worker_started", {
+    port: PORT,
+    max_concurrency: MAX_CONCURRENCY,
+    max_requests_per_minute: MAX_REQUESTS_PER_MINUTE,
+    hard_job_timeout_ms: HARD_JOB_TIMEOUT_MS,
+    execution_model: "child-process-per-job",
+    target_policy: ALLOW_PRIVATE ? "private-allowed-test-mode" : "public-http-only",
+  });
 });

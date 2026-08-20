@@ -6,6 +6,8 @@ COPY --chown=pwuser:pwuser package.json ./
 RUN npm install --omit=dev
 
 COPY --chown=pwuser:pwuser browser-worker.js ./browser-worker.js
+COPY --chown=pwuser:pwuser browser-job.js ./browser-job.js
+COPY --chown=pwuser:pwuser src/web-review/browser-job-process.js ./src/web-review/browser-job-process.js
 COPY --chown=pwuser:pwuser src/web-review/browser-runner.js ./src/web-review/browser-runner.js
 COPY --chown=pwuser:pwuser src/web-review/url-policy.js ./src/web-review/url-policy.js
 
