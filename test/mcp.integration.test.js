@@ -43,20 +43,23 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   });
   await ready;
 
-  const client = new Client({ name: "human-review-integration-test", version: "0.5.0" });
+  const client = new Client({ name: "human-review-integration-test", version: "0.6.0" });
   const transport = new StreamableHTTPClientTransport(MCP_URL);
   await client.connect(transport);
   t.after(async () => {
     await client.close().catch(() => {});
   });
 
-  assert.equal(client.getServerVersion()?.version, "0.5.0");
+  assert.equal(client.getServerVersion()?.version, "0.6.0");
   assert.match(client.getInstructions() ?? "", /create_review/);
   assert.match(client.getInstructions() ?? "", /create_web_review/);
   assert.match(client.getInstructions() ?? "", /open_web_review/);
   assert.match(client.getInstructions() ?? "", /candidate_overlap/);
   assert.match(client.getInstructions() ?? "", /get_web_findings/);
   assert.match(client.getInstructions() ?? "", /accepted findings/);
+  assert.match(client.getInstructions() ?? "", /run_web_action/);
+  assert.match(client.getInstructions() ?? "", /match exactly one element/);
+  assert.match(client.getInstructions() ?? "", /before and after evidence/);
   assert.match(client.getInstructions() ?? "", /user_edited_html/);
 
   const listed = await client.listTools();
@@ -69,10 +72,12 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
       "create_review",
       "create_web_review",
       "get_review_feedback",
+      "get_web_action_run",
       "get_web_evidence",
       "get_web_findings",
       "open_review",
       "open_web_review",
+      "run_web_action",
       "save_review_draft",
       "set_web_finding_decision",
       "submit_review",
@@ -86,6 +91,8 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   const captureTool = listed.tools.find((tool) => tool.name === "capture_web_review");
   const decisionTool = listed.tools.find((tool) => tool.name === "set_web_finding_decision");
   const findingsTool = listed.tools.find((tool) => tool.name === "get_web_findings");
+  const actionTool = listed.tools.find((tool) => tool.name === "run_web_action");
+  const actionRunTool = listed.tools.find((tool) => tool.name === "get_web_action_run");
   assert.equal(openTool?._meta?.ui?.resourceUri, HUMAN_RESOURCE_URI);
   assert.equal(openTool?._meta?.["openai/outputTemplate"], HUMAN_RESOURCE_URI);
   assert.equal(webOpenTool?._meta?.ui?.resourceUri, WEB_RESOURCE_URI);
@@ -97,8 +104,12 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   assert.equal(submitTool?._meta?.["openai/visibility"], "private");
   assert.equal(decisionTool?._meta?.["openai/visibility"], "private");
   assert.deepEqual(findingsTool?._meta?.ui?.visibility, ["model"]);
+  assert.deepEqual(actionTool?._meta?.ui?.visibility, ["model"]);
+  assert.deepEqual(actionRunTool?._meta?.ui?.visibility, ["model"]);
   assert.equal(captureTool?.annotations?.openWorldHint, true);
   assert.equal(captureTool?.annotations?.readOnlyHint, false);
+  assert.equal(actionTool?.annotations?.openWorldHint, true);
+  assert.equal(actionTool?.annotations?.readOnlyHint, false);
 
   const resources = await client.listResources();
   assert.ok(resources.resources.some((resource) => resource.uri === HUMAN_RESOURCE_URI));
