@@ -42,15 +42,16 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   });
   await ready;
 
-  const client = new Client({ name: "human-review-integration-test", version: "0.2.0" });
+  const client = new Client({ name: "human-review-integration-test", version: "0.3.0" });
   const transport = new StreamableHTTPClientTransport(MCP_URL);
   await client.connect(transport);
   t.after(async () => {
     await client.close().catch(() => {});
   });
 
-  assert.equal(client.getServerVersion()?.version, "0.2.0");
+  assert.equal(client.getServerVersion()?.version, "0.3.0");
   assert.match(client.getInstructions() ?? "", /create_review/);
+  assert.match(client.getInstructions() ?? "", /create_web_review/);
   assert.match(client.getInstructions() ?? "", /user_edited_html/);
 
   const listed = await client.listTools();
@@ -58,8 +59,11 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
     listed.tools.map((tool) => tool.name).sort(),
     [
       "apply_review",
+      "capture_web_review",
       "create_review",
+      "create_web_review",
       "get_review_feedback",
+      "get_web_evidence",
       "open_review",
       "save_review_draft",
       "submit_review",
@@ -69,12 +73,14 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   const openTool = listed.tools.find((tool) => tool.name === "open_review");
   const saveTool = listed.tools.find((tool) => tool.name === "save_review_draft");
   const submitTool = listed.tools.find((tool) => tool.name === "submit_review");
+  const captureTool = listed.tools.find((tool) => tool.name === "capture_web_review");
   assert.equal(openTool?._meta?.ui?.resourceUri, RESOURCE_URI);
   assert.equal(openTool?._meta?.["openai/outputTemplate"], RESOURCE_URI);
   assert.deepEqual(saveTool?._meta?.ui?.visibility, ["app"]);
   assert.deepEqual(submitTool?._meta?.ui?.visibility, ["app"]);
   assert.equal(saveTool?._meta?.["openai/visibility"], "private");
   assert.equal(submitTool?._meta?.["openai/visibility"], "private");
+  assert.equal(captureTool?.annotations?.openWorldHint, true);
 
   const resources = await client.listResources();
   assert.ok(resources.resources.some((resource) => resource.uri === RESOURCE_URI));

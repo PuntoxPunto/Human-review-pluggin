@@ -9,17 +9,25 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { ReviewStore } from "./src/store.js";
+import { WebReviewStore } from "./src/web-review/store.js";
+import { EvidenceStore } from "./src/web-review/evidence-store.js";
+import { BrowserRunner } from "./src/web-review/browser-runner.js";
+import { registerWebReviewTools } from "./src/web-review/tools.js";
 
 const TEMPLATE_URI = "ui://widget/human-review/v2.html";
 const STORE_MODE = "memory-ephemeral";
 const NOAUTH = [{ type: "noauth" }];
 const SERVER_INSTRUCTIONS = [
   "When the user asks to visually review HTML, call create_review with the complete HTML, then open_review.",
+  "When the user asks to review a public live or staging URL, call create_web_review and then capture_web_review. Use get_web_evidence when DOM/geometry details are needed.",
   "When Human Review sends a feedback batch, call get_review_feedback and treat user_edited_html as the source of truth.",
   "Preserve direct human edits exactly unless an explicit user comment asks to change them.",
   "Call apply_review, resolve any direct-edit conflict, then call open_review again.",
 ].join(" ");
 const store = new ReviewStore();
+const webReviewStore = new WebReviewStore();
+const evidenceStore = new EvidenceStore();
+const browserRunner = new BrowserRunner();
 const widgetShell = readFileSync(new URL("./public/review-widget.html", import.meta.url), "utf8");
 const widgetScript = readFileSync(new URL("./public/review-widget.js", import.meta.url), "utf8");
 const widgetHtml = widgetShell.replace("/*__WIDGET_SCRIPT__*/", widgetScript.replaceAll("</script>", "<\\/script>"));
@@ -255,7 +263,7 @@ function registerTools(server) {
 
 function createMcpServer() {
   const server = new McpServer(
-    { name: "human-review-chatgpt", version: "0.2.0" },
+    { name: "human-review-chatgpt", version: "0.3.0" },
     { instructions: SERVER_INSTRUCTIONS },
   );
 
@@ -278,6 +286,11 @@ function createMcpServer() {
   }));
 
   registerTools(server);
+  registerWebReviewTools(server, {
+    store: webReviewStore,
+    evidenceStore,
+    runner: browserRunner,
+  });
   return server;
 }
 
@@ -307,9 +320,14 @@ const httpServer = createHttpServer(async (req, res) => {
     return res.end(JSON.stringify({
       ok: true,
       name: "human-review-chatgpt",
-      version: "0.2.0",
+      version: "0.3.0",
       mcp: MCP_PATH,
       storage: STORE_MODE,
+      web_review: {
+        enabled: true,
+        browser: "playwright-chromium",
+        target_policy: "public-http-only",
+      },
       warning: STORE_MODE === "memory-ephemeral" ? "Review sessions reset when the server process restarts." : undefined,
     }));
   }
