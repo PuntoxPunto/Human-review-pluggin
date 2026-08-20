@@ -11,6 +11,7 @@ function sourceOf(finding) {
 function fingerprint(finding) {
   const stable = JSON.stringify({
     source: sourceOf(finding),
+    comparisonId: finding.comparisonId || null,
     type: finding.type,
     target: finding.target?.path || finding.target?.selector || null,
     related: finding.related?.path || finding.related?.selector || null,
@@ -98,6 +99,7 @@ export class FindingStore {
       rejected: 0,
       deterministic: 0,
       visual_critic: 0,
+      reference_critic: 0,
     };
     for (const finding of findings) {
       if (Object.hasOwn(counts, finding.severity)) counts[finding.severity] += 1;
