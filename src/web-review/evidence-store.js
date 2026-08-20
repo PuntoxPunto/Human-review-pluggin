@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createStateMap } from "../state-map.js";
 
 function cloneWithoutScreenshot(evidence) {
   const { screenshotBase64, ...rest } = evidence;
@@ -6,7 +7,7 @@ function cloneWithoutScreenshot(evidence) {
 }
 
 export class EvidenceStore {
-  #evidence = new Map();
+  #evidence = createStateMap("web-evidence");
 
   put({ reviewId, runId, capture }) {
     const id = `ev_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
