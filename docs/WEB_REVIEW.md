@@ -1,6 +1,6 @@
-# Web Review — M1/M2/M3
+# Web Review — M1/M2/M3/M4
 
-Web Review extends Human Review without replacing its HTML editing loop. Human Review remains the source of truth for direct human edits; Web Review adds a second review mode for public live/staging URLs and a read-only QA cockpit built from reproducible Playwright evidence.
+Web Review extends Human Review without replacing its HTML editing loop. Human Review remains the source of truth for direct human edits; Web Review adds live-browser QA for public staging URLs using reproducible Playwright evidence.
 
 ## Implemented scope
 
@@ -16,19 +16,29 @@ Web Review extends Human Review without replacing its HTML editing loop. Human R
 
 ### M3 — deterministic findings and cockpit
 
-1. `capture_web_review` automatically runs deterministic geometry analysis after capture.
-2. `analyze_web_geometry` can rerun geometry analysis against stored evidence without another browser navigation.
-3. `open_web_review` renders the selected or latest evidence snapshot in a dedicated MCP Apps cockpit.
-4. The cockpit shows the Playwright screenshot, finding counts, a finding rail, confidence, and scaled bounding overlays.
-5. Evidence elements now include DOM paths and parent paths so containment can be distinguished from sibling overlap.
-6. Findings are stored separately from browser evidence so later critic/human decisions do not mutate the raw capture.
+1. Captures automatically run deterministic geometry analysis.
+2. `analyze_web_geometry` reruns analysis against stored evidence without another navigation.
+3. `open_web_review` renders one immutable evidence snapshot in a dedicated MCP Apps cockpit.
+4. The cockpit shows screenshot, finding counts, issue rail, confidence, and scaled overlays.
+5. Evidence elements include DOM paths and parent paths so containment can be distinguished from sibling overlap.
+6. Findings are stored separately from raw browser evidence.
+
+### M4 — human QA decisions
+
+1. Each finding has a stable fingerprint based on finding type and target/related DOM identity.
+2. Human decisions are stored as `new`, `accepted`, or `rejected`.
+3. Findings support persistent human comments.
+4. Re-running `analyze_web_geometry` preserves matching decisions and comments instead of replacing them.
+5. `set_web_finding_decision` is an app-private tool used by the cockpit.
+6. `get_web_findings` is model-visible so ChatGPT can read accepted/rejected findings and human comments.
+7. The Web Review cockpit v2 adds Accept, Reject, Reset, Add comment, decision counts, and Send decisions.
+8. Sending decisions asks ChatGPT to act only on accepted findings and explicit human comments and to ignore rejected findings.
 
 Still deferred:
 
-- interactive browser actions from the cockpit;
-- accept/reject/comment workflow for Web Review findings;
+- deterministic browser action/scenario execution;
 - scroll/motion sampling;
-- semantic/LLM browser actions and action recipes;
+- semantic/LLM browser recovery and action recipes;
 - visual LLM critic;
 - reference comparison;
 - autonomous fix/retest.
@@ -41,6 +51,7 @@ ChatGPT
   | create_web_review
   | capture_web_review
   | analyze_web_geometry
+  | get_web_findings
   | open_web_review
   v
 MCP server
@@ -50,13 +61,10 @@ MCP server
   |
   +-- BrowserRunner
   |      Playwright -> Chromium
-  |          |
   |          +-- screenshot
-  |          +-- visible DOM + DOM paths
-  |          +-- bounding rectangles
-  |          +-- viewport + scroll + document metrics
-  |          +-- console errors
-  |          +-- network failures
+  |          +-- DOM paths + geometry
+  |          +-- viewport / scroll / document metrics
+  |          +-- console + network failures
   |
   +-- EvidenceStore
   |      immutable capture records
@@ -65,13 +73,13 @@ MCP server
   |      overflow / clipping / overlap candidates
   |
   +-- FindingStore
-  |      evidence-scoped findings
+  |      fingerprint + status + comments
   |
   +-- Web Review MCP Apps UI
-         screenshot + overlays + finding rail
+         evidence overlay + human decisions
 ```
 
-The browser runner remains isolated from the Human Review store/widget so browser execution can later move to a Docker/remote runner without changing the Human Review editing contract.
+The raw evidence layer remains immutable. Human decisions and later critic output are additional state layers referencing that evidence.
 
 ## Evidence contract
 
@@ -81,79 +89,59 @@ Each capture receives stable lineage IDs:
 webrev_* -> run_* -> ev_*
 ```
 
-Evidence contains:
+Evidence includes final URL, title, viewport, document dimensions, scroll position, PNG screenshot, visible DOM/geometry records, console/page errors, and failed or blocked requests.
 
-- final URL after navigation;
-- document title;
-- viewport dimensions;
-- document scroll/client dimensions;
-- scroll position;
-- PNG screenshot;
-- up to 600 visible DOM/geometry records from the current viewport;
-- console/page errors;
-- failed or blocked network requests.
+A visible element record includes tag, selector hint, DOM path, parent path, ARIA role/name hints, bounding rectangle, position/z-index, and overflow styles.
 
-A visible element record contains:
-
-- tag;
-- compact selector hint;
-- DOM path and parent path;
-- ARIA role when available;
-- accessible-ish name/text hints;
-- bounding rectangle;
-- position/z-index;
-- overflow styles.
-
-This representation is intentionally smaller and more structured than shipping the complete raw page HTML to the model.
-
-## Deterministic geometry findings
-
-M3 deliberately starts with browser-measurable checks rather than an LLM judging screenshots.
+## Geometry semantics
 
 ### `horizontal_overflow`
 
-Compares document `scrollWidth` against viewport width. Confidence is high (`0.99`) because the browser measurement is deterministic.
+Browser-measured document overflow. High-confidence deterministic evidence.
 
 ### `element_horizontal_clipping`
 
-Flags visible elements crossing the left/right viewport boundary by more than 2px. Larger clipping is elevated from warning to error.
+Visible element extending beyond the horizontal viewport boundary. High-confidence browser evidence.
 
 ### `candidate_overlap`
 
-Compares meaningful visible sibling elements and reports sufficiently large rectangle intersections. Parent/child containment is excluded using DOM paths.
+Meaningful sibling rectangle intersection with parent-child containment excluded. This remains heuristic (`info`/`warning`, confidence below `0.8`) and is not a blocking failure until confirmed by a human or visual critic.
 
-This finding is intentionally heuristic:
+## Human decision contract
 
-- it is `info` or `warning`, never a hard error in M3;
-- confidence stays below `0.8`;
-- it should later be confirmed by visual critique or a human before becoming a blocking QA gate.
+A human decision is not part of the immutable evidence; it references a finding derived from that evidence.
 
-This distinction is important: browser geometry can prove that rectangles intersect, but it cannot by itself prove that the overlap is undesirable.
+Priority is:
+
+```text
+Human accepted/rejected decision
+  > deterministic analyzer refresh
+  > model assumption
+```
+
+Reanalysis preserves decisions by matching a stable fingerprint:
+
+```text
+type + target DOM identity + related DOM identity
+```
+
+Metrics such as overlap area or overflow pixels are deliberately not part of the fingerprint so analyzer refinements cannot silently discard a human decision.
+
+When the cockpit sends decisions back to ChatGPT, the model should call `get_web_findings`, act on accepted findings and explicit comments, and not turn rejected findings into implementation tasks.
 
 ## Cockpit contract
 
-`open_web_review` does not navigate again. It opens one immutable evidence snapshot, which means the screenshot, viewport, DOM geometry, and findings shown in the UI all refer to the same browser state.
+`open_web_review` never navigates again. Screenshot, viewport, geometry, and findings always refer to the same immutable evidence snapshot.
 
-The widget receives the full screenshot and findings through hidden tool-result metadata rather than expanding them into model-visible structured content.
-
-The initial cockpit is intentionally read-only. Human finding decisions and browser interactions should be added as separate state transitions instead of overloading the raw evidence layer.
+Cockpit mutations are restricted to decision state via the private `set_web_finding_decision` tool. The widget cannot modify raw evidence.
 
 ## Security boundary
 
-Live browser automation creates an SSRF risk. Production Web Review therefore rejects:
+Live browser automation creates an SSRF risk. Production Web Review rejects non-HTTP(S), embedded credentials, localhost/local domains, private/link-local/reserved IP ranges, and browser subrequests resolving to blocked addresses.
 
-- protocols other than HTTP(S);
-- URLs containing credentials;
-- localhost and `.local` hosts;
-- loopback, RFC1918/private, CGNAT, link-local, benchmark, documentation, multicast, and other reserved IPv4 targets;
-- loopback, mapped, unique-local, link-local, multicast, and documentation IPv6 targets;
-- requests whose DNS resolution points to a blocked address.
+`allowPrivateTargets` exists only for controlled test fixtures. Production browser execution should ultimately live in an isolated worker/container with egress controls, quotas, time limits, and per-user authorization.
 
-The same policy is applied to browser requests so a public page cannot intentionally request a private target. `allowPrivateTargets` exists only for controlled test fixtures.
-
-This is an initial application boundary, not a complete production sandbox. Browser execution should ultimately run in an isolated worker/container with egress controls, resource quotas, time limits, and per-user authorization.
-
-## Runtime requirements
+## Runtime
 
 ```bash
 npm install
@@ -162,27 +150,27 @@ npm test
 npm start
 ```
 
-CI performs the same Chromium installation and runs a real browser fixture.
-
 ## Acceptance gates
 
-### M1/M2 gate
+### M1/M2
 
-CI must prove that BrowserRunner can launch Chromium, navigate, capture a non-empty PNG, report viewport and document geometry, discover visible elements, and preserve review/run/evidence lineage while the original Human Review MCP loop remains green.
+Real Chromium must navigate, capture PNG evidence, report viewport/document geometry, discover visible elements, preserve lineage, and keep the Human Review loop green.
 
-### M3 gate
+### M3
+
+CI must validate overflow, clipping, heuristic overlap, parent-child exclusion, DOM paths, dual MCP Apps resources, and correct Web Review cockpit routing.
+
+### M4
 
 CI must additionally prove that:
 
-1. document overflow generates the expected deterministic finding;
-2. viewport clipping generates an element-scoped finding;
-3. meaningful sibling overlap produces only a heuristic candidate;
-4. parent-child containment is not treated as overlap;
-5. browser evidence contains stable DOM/parent paths;
-6. ChatGPT discovers both Human Review and Web Review MCP Apps resources;
-7. `open_web_review` points at the Web Review cockpit resource;
-8. capture is correctly annotated as state-writing, not read-only.
+1. human decision tools are discovered with correct model/app visibility;
+2. the cockpit resource is versioned independently from the previous read-only resource;
+3. accepted/rejected status and comments survive deterministic reanalysis;
+4. fingerprints remain stable even if finding metrics or descriptions change;
+5. the original Human Review direct-edit loop remains green;
+6. real Chromium integration remains green.
 
 ## Next slice
 
-The next recommended slice is M4/M5 foundation: add human finding decisions (`accept`, `reject`, `comment`) and deterministic browser scenarios/actions before introducing semantic LLM recovery. Scroll/motion sampling should follow immediately after because motion-heavy pages require evidence at multiple scroll states rather than a single viewport capture.
+M5 should introduce deterministic browser actions and scenarios without LLM recovery: locate using stable role/text/path primitives, execute one bounded action, capture evidence after the action, and link before/after evidence through one scenario step. Semantic recovery and reusable action recipes should only be introduced once those deterministic primitives pass their own browser gates.
