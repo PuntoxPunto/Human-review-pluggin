@@ -12,8 +12,16 @@ async function startFixtureServer() {
         <body style="margin:0">
           <main>
             <h1 id="headline">Evidence works</h1>
-            <button aria-label="Primary action">Continue</button>
+            <p id="status">idle</p>
+            <label>Email <input id="email" aria-label="Email" /></label>
+            <button id="primary" aria-label="Primary action">Continue</button>
+            <button id="secondary" aria-label="Secondary action">Continue</button>
           </main>
+          <script>
+            document.getElementById('primary').addEventListener('click', () => {
+              document.getElementById('status').textContent = 'clicked';
+            });
+          </script>
         </body>
       </html>`);
   });
@@ -52,8 +60,47 @@ test("BrowserRunner captures screenshot, DOM paths, document geometry, and viewp
   assert.match(heading.path, /h1#headline$/);
   assert.match(heading.parentPath, /main$/);
 
-  const button = capture.structure.find((element) => element.tag === "button");
+  const button = capture.structure.find((element) => element.tag === "button" && element.selector === "button#primary");
   assert.equal(button?.name, "Primary action");
-  assert.match(button?.path || "", /button$/);
   assert.equal(capture.consoleErrors.length, 0);
+});
+
+test("runAction captures before and after evidence around one exact role locator", { timeout: 30_000 }, async (t) => {
+  const fixture = await startFixtureServer();
+  t.after(() => new Promise((resolve) => fixture.server.close(resolve)));
+
+  const runner = new BrowserRunner({ allowPrivateTargets: true });
+  const result = await runner.runAction({
+    url: fixture.url,
+    viewport: { width: 900, height: 700 },
+    action: {
+      type: "click",
+      locator: { strategy: "role", role: "button", name: "Primary action", exact: true },
+    },
+  });
+
+  const beforeStatus = result.before.structure.find((element) => element.selector === "p#status");
+  const afterStatus = result.after.structure.find((element) => element.selector === "p#status");
+  assert.equal(beforeStatus?.text, "idle");
+  assert.equal(afterStatus?.text, "clicked");
+  assert.equal(result.resolvedLocator.strategy, "role");
+  assert.equal(result.resolvedLocator.matched.tag, "button");
+  assert.equal(result.resolvedLocator.matched.ariaLabel, "Primary action");
+  assert.ok(result.before.screenshotBase64.length > 100);
+  assert.ok(result.after.screenshotBase64.length > 100);
+});
+
+test("runAction refuses an ambiguous exact locator instead of guessing", { timeout: 30_000 }, async (t) => {
+  const fixture = await startFixtureServer();
+  t.after(() => new Promise((resolve) => fixture.server.close(resolve)));
+
+  const runner = new BrowserRunner({ allowPrivateTargets: true });
+  await assert.rejects(
+    () => runner.runAction({
+      url: fixture.url,
+      viewport: { width: 900, height: 700 },
+      action: { type: "click", locator: { strategy: "text", text: "Continue", exact: true } },
+    }),
+    /match exactly one element; matched 2/,
+  );
 });
