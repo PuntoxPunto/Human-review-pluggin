@@ -7,7 +7,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 const PORT = 8799;
 const MCP_URL = new URL(`http://127.0.0.1:${PORT}/mcp`);
 const HUMAN_RESOURCE_URI = "ui://widget/human-review/v2.html";
-const WEB_RESOURCE_URI = "ui://widget/web-review/v2.html";
+const WEB_RESOURCE_URI = "ui://widget/web-review/v3.html";
 
 function startServer() {
   const child = spawn(process.execPath, ["server.js"], {
@@ -81,6 +81,7 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
       "get_web_locator_recovery_context",
       "get_web_scenario_run",
       "get_web_scroll_run",
+      "get_web_visual_critic_context",
       "open_review",
       "open_web_review",
       "run_web_action",
@@ -89,6 +90,7 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
       "save_review_draft",
       "set_web_finding_decision",
       "submit_review",
+      "submit_web_visual_findings",
       "verify_web_locator_recovery",
     ],
   );
@@ -109,6 +111,8 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   const recoveryContextTool = listed.tools.find((tool) => tool.name === "get_web_locator_recovery_context");
   const recoveryVerifyTool = listed.tools.find((tool) => tool.name === "verify_web_locator_recovery");
   const recoveryRecipesTool = listed.tools.find((tool) => tool.name === "get_web_locator_recipes");
+  const visualContextTool = listed.tools.find((tool) => tool.name === "get_web_visual_critic_context");
+  const visualSubmitTool = listed.tools.find((tool) => tool.name === "submit_web_visual_findings");
   assert.equal(openTool?._meta?.ui?.resourceUri, HUMAN_RESOURCE_URI);
   assert.equal(openTool?._meta?.["openai/outputTemplate"], HUMAN_RESOURCE_URI);
   assert.equal(webOpenTool?._meta?.ui?.resourceUri, WEB_RESOURCE_URI);
@@ -129,6 +133,8 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   assert.deepEqual(recoveryContextTool?._meta?.ui?.visibility, ["model"]);
   assert.deepEqual(recoveryVerifyTool?._meta?.ui?.visibility, ["model"]);
   assert.deepEqual(recoveryRecipesTool?._meta?.ui?.visibility, ["model"]);
+  assert.deepEqual(visualContextTool?._meta?.ui?.visibility, ["model"]);
+  assert.deepEqual(visualSubmitTool?._meta?.ui?.visibility, ["model"]);
   assert.equal(captureTool?.annotations?.openWorldHint, true);
   assert.equal(captureTool?.annotations?.readOnlyHint, false);
   assert.equal(actionTool?.annotations?.openWorldHint, true);
@@ -144,6 +150,11 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   assert.equal(recoveryVerifyTool?.annotations?.readOnlyHint, false);
   assert.equal(recoveryVerifyTool?.annotations?.openWorldHint, true);
   assert.equal(recoveryRecipesTool?.annotations?.readOnlyHint, true);
+  assert.equal(visualContextTool?.annotations?.readOnlyHint, true);
+  assert.equal(visualContextTool?.annotations?.openWorldHint, false);
+  assert.equal(visualSubmitTool?.annotations?.readOnlyHint, false);
+  assert.equal(visualSubmitTool?.annotations?.openWorldHint, false);
+  assert.equal(visualSubmitTool?.annotations?.idempotentHint, true);
 
   const resources = await client.listResources();
   assert.ok(resources.resources.some((resource) => resource.uri === HUMAN_RESOURCE_URI));
@@ -159,6 +170,8 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   assert.match(webResource.contents[0]?.text ?? "", /Findings/);
   assert.match(webResource.contents[0]?.text ?? "", /Send decisions/);
   assert.match(webResource.contents[0]?.text ?? "", /set_web_finding_decision/);
+  assert.match(webResource.contents[0]?.text ?? "", /visual critic/i);
+  assert.match(webResource.contents[0]?.text ?? "", /deterministic/i);
 
   const created = await client.callTool({
     name: "create_review",
