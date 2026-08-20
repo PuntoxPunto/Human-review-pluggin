@@ -8,7 +8,10 @@ async function startFixtureServer() {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end(`<!doctype html>
       <html>
-        <head><title>Web Review Fixture</title></head>
+        <head>
+          <title>Web Review Fixture</title>
+          <style>html { scroll-behavior: smooth; }</style>
+        </head>
         <body style="margin:0">
           <main>
             <h1 id="headline">Evidence works</h1>
@@ -16,6 +19,9 @@ async function startFixtureServer() {
             <label>Email <input id="email" aria-label="Email" /></label>
             <button id="primary" aria-label="Primary action">Continue</button>
             <button id="secondary" aria-label="Secondary action">Continue</button>
+            <div style="height:1100px"></div>
+            <section id="scroll-target" style="height:120px;display:flex;align-items:center">Scroll target</section>
+            <div style="height:1000px"></div>
           </main>
           <script>
             document.getElementById('primary').addEventListener('click', () => {
@@ -50,7 +56,7 @@ test("BrowserRunner captures screenshot, DOM paths, document geometry, and viewp
   assert.deepEqual(capture.viewport, { width: 900, height: 700 });
   assert.deepEqual(capture.scroll, { x: 0, y: 0 });
   assert.ok(capture.document.scrollWidth >= 900);
-  assert.ok(capture.document.scrollHeight >= 700);
+  assert.ok(capture.document.scrollHeight > 2000);
   assert.ok(capture.screenshotBase64.length > 100);
 
   const heading = capture.structure.find((element) => element.tag === "h1" && element.text === "Evidence works");
@@ -103,4 +109,31 @@ test("runAction refuses an ambiguous exact locator instead of guessing", { timeo
     }),
     /match exactly one element; matched 2/,
   );
+});
+
+test("runScrollCheckpoints captures progress and exact element centering despite page smooth-scroll CSS", { timeout: 30_000 }, async (t) => {
+  const fixture = await startFixtureServer();
+  t.after(() => new Promise((resolve) => fixture.server.close(resolve)));
+
+  const runner = new BrowserRunner({ allowPrivateTargets: true });
+  const steps = await runner.runScrollCheckpoints({
+    url: fixture.url,
+    viewport: { width: 900, height: 700 },
+    checkpoints: [
+      { kind: "progress", progress: 0, label: "top" },
+      { kind: "progress", progress: 0.5, label: "middle" },
+      { kind: "element", locator: { strategy: "css", selector: "#scroll-target" }, align: "center", label: "target centered" },
+      { kind: "measure", locator: { strategy: "css", selector: "#scroll-target" }, label: "verify framing" },
+    ],
+  });
+
+  assert.equal(steps.length, 4);
+  assert.equal(steps[0].capture.scroll.y, 0);
+  assert.ok(steps[1].capture.scroll.y > 500);
+  assert.ok(Math.abs(steps[2].result.measurement.centerOffsetPx) <= 2, `center offset was ${steps[2].result.measurement.centerOffsetPx}px`);
+  assert.ok(Math.abs(steps[3].result.measurement.centerOffsetPx) <= 2, `measured center offset was ${steps[3].result.measurement.centerOffsetPx}px`);
+  assert.equal(steps[2].result.resolvedLocator.strategy, "css");
+  assert.equal(steps[2].result.resolvedLocator.matched.tag, "section");
+  assert.equal(steps[2].capture.structure.some((element) => element.selector === "section#scroll-target"), true);
+  for (const step of steps) assert.ok(step.capture.screenshotBase64.length > 100);
 });

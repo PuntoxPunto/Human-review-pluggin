@@ -167,9 +167,7 @@ async function resolveUniqueLocator(page, locatorSpec) {
   }
 
   const count = await locator.count();
-  if (count !== 1) {
-    throw new Error(`Deterministic locator must match exactly one element; matched ${count}.`);
-  }
+  if (count !== 1) throw new Error(`Deterministic locator must match exactly one element; matched ${count}.`);
 
   const matched = await locator.evaluate((element) => ({
     tag: element.tagName.toLowerCase(),
@@ -192,6 +190,77 @@ async function performAction(page, action, timeoutMs) {
     throw new Error("Action type must be click, fill, or scroll_into_view.");
   }
   return descriptor;
+}
+
+async function measureLocator(locator) {
+  return locator.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      rect: {
+        top: Math.round(rect.top * 10) / 10,
+        bottom: Math.round(rect.bottom * 10) / 10,
+        left: Math.round(rect.left * 10) / 10,
+        right: Math.round(rect.right * 10) / 10,
+        width: Math.round(rect.width * 10) / 10,
+        height: Math.round(rect.height * 10) / 10,
+      },
+      centerOffsetPx: Math.round((rect.top + rect.height / 2 - innerHeight / 2) * 10) / 10,
+      viewportHeight: innerHeight,
+      scrollY: Math.round(scrollY),
+    };
+  });
+}
+
+async function performScrollCheckpoint(page, checkpoint) {
+  if (checkpoint.kind === "progress") {
+    if (typeof checkpoint.progress !== "number" || checkpoint.progress < 0 || checkpoint.progress > 1) {
+      throw new Error("Scroll progress checkpoints require progress between 0 and 1.");
+    }
+    const result = await page.evaluate((progress) => {
+      const root = document.documentElement;
+      const body = document.body;
+      const scrollHeight = Math.max(root.scrollHeight, body?.scrollHeight || 0);
+      const maxY = Math.max(0, scrollHeight - innerHeight);
+      const targetY = Math.round(maxY * progress);
+      const previousValue = root.style.getPropertyValue("scroll-behavior");
+      const previousPriority = root.style.getPropertyPriority("scroll-behavior");
+      root.style.setProperty("scroll-behavior", "auto", "important");
+      window.scrollTo({ left: 0, top: targetY, behavior: "instant" });
+      if (previousValue) root.style.setProperty("scroll-behavior", previousValue, previousPriority);
+      else root.style.removeProperty("scroll-behavior");
+      return { requestedProgress: progress, targetY, maxY };
+    }, checkpoint.progress);
+    return { ...result, kind: "progress", resolvedLocator: null, measurement: null };
+  }
+
+  if (checkpoint.kind === "element" || checkpoint.kind === "measure") {
+    const { locator, descriptor } = await resolveUniqueLocator(page, checkpoint.locator);
+    if (checkpoint.kind === "element") {
+      const align = checkpoint.align || "center";
+      if (!["start", "center", "end"].includes(align)) throw new Error("Element scroll align must be start, center, or end.");
+      await locator.evaluate((element, requestedAlign) => {
+        const rect = element.getBoundingClientRect();
+        let target = scrollY + rect.top;
+        if (requestedAlign === "center") target -= (innerHeight - rect.height) / 2;
+        if (requestedAlign === "end") target -= innerHeight - rect.height;
+        const root = document.documentElement;
+        const previousValue = root.style.getPropertyValue("scroll-behavior");
+        const previousPriority = root.style.getPropertyPriority("scroll-behavior");
+        root.style.setProperty("scroll-behavior", "auto", "important");
+        window.scrollTo({ left: 0, top: Math.max(0, target), behavior: "instant" });
+        if (previousValue) root.style.setProperty("scroll-behavior", previousValue, previousPriority);
+        else root.style.removeProperty("scroll-behavior");
+      }, align);
+    }
+    return {
+      kind: checkpoint.kind,
+      align: checkpoint.kind === "element" ? checkpoint.align || "center" : null,
+      resolvedLocator: descriptor,
+      measurement: await measureLocator(locator),
+    };
+  }
+
+  throw new Error("Scroll checkpoint kind must be progress, element, or measure.");
 }
 
 export class BrowserRunner {
@@ -237,6 +306,27 @@ export class BrowserRunner {
       await settlePage(page, Math.min(3_000, timeoutMs));
       const after = await snapshotPage(page, diagnostics);
       return { before, after, resolvedLocator };
+    });
+  }
+
+  async runScrollCheckpoints({ url, viewport = { width: 1440, height: 900 }, checkpoints, timeoutMs = 30_000 }) {
+    if (!Array.isArray(checkpoints) || !checkpoints.length || checkpoints.length > 20) {
+      throw new Error("Scroll review requires between 1 and 20 checkpoints.");
+    }
+    return this.#withPage({ url, viewport, timeoutMs }, async (page, diagnostics) => {
+      const steps = [];
+      for (let index = 0; index < checkpoints.length; index += 1) {
+        const checkpoint = checkpoints[index];
+        const result = await performScrollCheckpoint(page, checkpoint);
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        if (result.resolvedLocator && result.measurement) {
+          const { locator } = await resolveUniqueLocator(page, checkpoint.locator);
+          result.measurement = await measureLocator(locator);
+        }
+        const capture = await snapshotPage(page, diagnostics);
+        steps.push({ index, checkpoint, result, capture });
+      }
+      return steps;
     });
   }
 }
