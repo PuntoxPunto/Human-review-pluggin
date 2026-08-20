@@ -1,15 +1,15 @@
 {
   "name": "human-review-chatgpt",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
-  "description": "Human and live-web visual review inside ChatGPT using MCP Apps UI, Playwright evidence, deterministic geometry findings, and human QA decisions.",
+  "description": "Human and live-web visual review inside ChatGPT using MCP Apps UI, Playwright evidence, deterministic QA findings, human decisions, and bounded browser actions.",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check src/store.js && node --check src/sanitize.js && node --check src/web-review/url-policy.js && node --check src/web-review/store.js && node --check src/web-review/evidence-store.js && node --check src/web-review/finding-store.js && node --check src/web-review/geometry.js && node --check src/web-review/browser-runner.js && node --check src/web-review/ui.js && node --check src/web-review/tools.js && node --check public/review-widget.js && node --check public/web-review-widget.js",
+    "check": "node --check server.js && node --check src/store.js && node --check src/sanitize.js && node --check src/web-review/url-policy.js && node --check src/web-review/store.js && node --check src/web-review/evidence-store.js && node --check src/web-review/finding-store.js && node --check src/web-review/action-store.js && node --check src/web-review/geometry.js && node --check src/web-review/browser-runner.js && node --check src/web-review/ui.js && node --check src/web-review/tools.js && node --check src/web-review/action-tools.js && node --check public/review-widget.js && node --check public/web-review-widget.js",
     "test": "node --test"
   },
   "dependencies": {

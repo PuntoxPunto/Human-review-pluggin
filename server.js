@@ -12,8 +12,10 @@ import { ReviewStore } from "./src/store.js";
 import { WebReviewStore } from "./src/web-review/store.js";
 import { EvidenceStore } from "./src/web-review/evidence-store.js";
 import { FindingStore } from "./src/web-review/finding-store.js";
+import { ActionRunStore } from "./src/web-review/action-store.js";
 import { BrowserRunner } from "./src/web-review/browser-runner.js";
 import { registerWebReviewTools } from "./src/web-review/tools.js";
+import { registerWebActionTools } from "./src/web-review/action-tools.js";
 import { registerWebReviewResource } from "./src/web-review/ui.js";
 
 const TEMPLATE_URI = "ui://widget/human-review/v2.html";
@@ -24,6 +26,7 @@ const SERVER_INSTRUCTIONS = [
   "When the user asks to review a public live or staging URL, call create_web_review, then capture_web_review, then open_web_review. Use get_web_evidence for DOM details and analyze_web_geometry to rerun deterministic geometry checks.",
   "Treat deterministic overflow and clipping findings as browser evidence; treat candidate_overlap as a heuristic that still needs human or visual verification.",
   "When the Web Review cockpit sends decisions, call get_web_findings. Act only on accepted findings and explicit human comments; do not apply rejected findings. Preserve the referenced evidence as the verification baseline.",
+  "For browser interaction, prefer run_web_action only when an exact role+name, exact text, or CSS locator can be specified. The locator must match exactly one element; do not guess through ambiguity. Each action captures before and after evidence.",
   "When Human Review sends a feedback batch, call get_review_feedback and treat user_edited_html as the source of truth.",
   "Preserve direct human edits exactly unless an explicit user comment asks to change them.",
   "Call apply_review, resolve any direct-edit conflict, then call open_review again.",
@@ -32,6 +35,7 @@ const store = new ReviewStore();
 const webReviewStore = new WebReviewStore();
 const evidenceStore = new EvidenceStore();
 const findingStore = new FindingStore();
+const actionStore = new ActionRunStore();
 const browserRunner = new BrowserRunner();
 const widgetShell = readFileSync(new URL("./public/review-widget.html", import.meta.url), "utf8");
 const widgetScript = readFileSync(new URL("./public/review-widget.js", import.meta.url), "utf8");
@@ -268,7 +272,7 @@ function registerTools(server) {
 
 function createMcpServer() {
   const server = new McpServer(
-    { name: "human-review-chatgpt", version: "0.5.0" },
+    { name: "human-review-chatgpt", version: "0.6.0" },
     { instructions: SERVER_INSTRUCTIONS },
   );
 
@@ -296,6 +300,13 @@ function createMcpServer() {
     store: webReviewStore,
     evidenceStore,
     findingStore,
+    runner: browserRunner,
+  });
+  registerWebActionTools(server, {
+    reviewStore: webReviewStore,
+    evidenceStore,
+    findingStore,
+    actionStore,
     runner: browserRunner,
   });
   return server;
@@ -327,7 +338,7 @@ const httpServer = createHttpServer(async (req, res) => {
     return res.end(JSON.stringify({
       ok: true,
       name: "human-review-chatgpt",
-      version: "0.5.0",
+      version: "0.6.0",
       mcp: MCP_PATH,
       storage: STORE_MODE,
       web_review: {
@@ -337,6 +348,7 @@ const httpServer = createHttpServer(async (req, res) => {
         cockpit: true,
         geometry_findings: true,
         human_decisions: true,
+        deterministic_actions: ["click", "fill", "scroll_into_view"],
       },
       warning: STORE_MODE === "memory-ephemeral" ? "Review sessions reset when the server process restarts." : undefined,
     }));

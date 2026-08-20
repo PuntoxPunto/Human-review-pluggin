@@ -63,8 +63,16 @@ export class WebReviewStore {
     run.evidenceId = evidenceId;
     run.completedAt = new Date().toISOString();
     review.status = "reviewing";
-    review.evidenceIds.push(evidenceId);
+    this.#appendEvidence(review, evidenceId);
     review.updatedAt = run.completedAt;
+    return clone(review);
+  }
+
+  recordEvidence(id, evidenceId) {
+    const review = this.#mustGet(id);
+    this.#appendEvidence(review, evidenceId);
+    review.status = "reviewing";
+    review.updatedAt = new Date().toISOString();
     return clone(review);
   }
 
@@ -78,6 +86,10 @@ export class WebReviewStore {
     review.status = "error";
     review.updatedAt = run.completedAt;
     return clone(review);
+  }
+
+  #appendEvidence(review, evidenceId) {
+    if (!review.evidenceIds.includes(evidenceId)) review.evidenceIds.push(evidenceId);
   }
 
   #mustGet(id) {
