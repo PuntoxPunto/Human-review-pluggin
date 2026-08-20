@@ -74,6 +74,26 @@ export class BrowserRunner {
           const classes = Array.from(element.classList || []).filter(Boolean).slice(0, 3);
           return classes.length ? `${tag}.${classes.map((name) => CSS.escape(name)).join(".")}` : tag;
         };
+        const domPath = (element) => {
+          const parts = [];
+          let current = element;
+          while (current && current.nodeType === 1 && current !== document.documentElement) {
+            const tag = current.tagName.toLowerCase();
+            if (current.id) {
+              parts.unshift(`${tag}#${CSS.escape(current.id)}`);
+              break;
+            }
+            let part = tag;
+            const parent = current.parentElement;
+            if (parent) {
+              const siblings = Array.from(parent.children).filter((child) => child.tagName === current.tagName);
+              if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+            }
+            parts.unshift(part);
+            current = parent;
+          }
+          return parts.join(" > ");
+        };
         const elements = [];
         for (const element of document.querySelectorAll("body *")) {
           if (elements.length >= MAX_ELEMENTS) break;
@@ -88,6 +108,8 @@ export class BrowserRunner {
           elements.push({
             tag: element.tagName.toLowerCase(),
             selector: selectorHint(element),
+            path: domPath(element),
+            parentPath: element.parentElement ? domPath(element.parentElement) : null,
             role: element.getAttribute("role") || null,
             name: name || null,
             text: text || null,
@@ -107,10 +129,18 @@ export class BrowserRunner {
             overflowY: style.overflowY,
           });
         }
+        const root = document.documentElement;
+        const body = document.body;
         return {
           title: document.title,
           scroll: { x: Math.round(scrollX), y: Math.round(scrollY) },
           viewport: { width: innerWidth, height: innerHeight },
+          document: {
+            scrollWidth: Math.max(root.scrollWidth, body?.scrollWidth || 0),
+            scrollHeight: Math.max(root.scrollHeight, body?.scrollHeight || 0),
+            clientWidth: root.clientWidth,
+            clientHeight: root.clientHeight,
+          },
           structure: elements,
         };
       });
@@ -121,6 +151,7 @@ export class BrowserRunner {
         title: metadata.title,
         viewport: metadata.viewport,
         scroll: metadata.scroll,
+        document: metadata.document,
         structure: metadata.structure,
         screenshotBase64: screenshot.toString("base64"),
         consoleErrors,
