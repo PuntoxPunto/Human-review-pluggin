@@ -1,20 +1,21 @@
 {
   "name": "human-review-chatgpt",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Visual HTML review and editing inside ChatGPT using MCP Apps UI.",
+  "description": "Human and live-web visual review inside ChatGPT using MCP Apps UI and Playwright evidence.",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check src/store.js && node --check src/sanitize.js && node --check public/review-widget.js",
+    "check": "node --check server.js && node --check src/store.js && node --check src/sanitize.js && node --check src/web-review/url-policy.js && node --check src/web-review/store.js && node --check src/web-review/evidence-store.js && node --check src/web-review/browser-runner.js && node --check src/web-review/tools.js && node --check public/review-widget.js",
     "test": "node --test"
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "^1.0.1",
     "@modelcontextprotocol/sdk": "^1.20.2",
+    "playwright": "^1.52.0",
     "zod": "^3.25.76"
   }
 }
