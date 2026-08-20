@@ -25,7 +25,8 @@ async function startFixtureServer() {
           </main>
           <script>
             document.getElementById('primary').addEventListener('click', () => {
-              document.getElementById('status').textContent = 'clicked';
+              const email = document.getElementById('email').value;
+              document.getElementById('status').textContent = email ? 'clicked:' + email : 'clicked';
             });
           </script>
         </body>
@@ -136,4 +137,57 @@ test("runScrollCheckpoints captures progress and exact element centering despite
   assert.equal(steps[2].result.resolvedLocator.matched.tag, "section");
   assert.equal(steps[2].capture.structure.some((element) => element.selector === "section#scroll-target"), true);
   for (const step of steps) assert.ok(step.capture.screenshotBase64.length > 100);
+});
+
+test("runScenario preserves browser state across fill, click, scroll and measure steps", { timeout: 30_000 }, async (t) => {
+  const fixture = await startFixtureServer();
+  t.after(() => new Promise((resolve) => fixture.server.close(resolve)));
+
+  const runner = new BrowserRunner({ allowPrivateTargets: true });
+  const result = await runner.runScenario({
+    url: fixture.url,
+    viewport: { width: 900, height: 700 },
+    steps: [
+      { kind: "action", label: "fill email", action: { type: "fill", locator: { strategy: "role", role: "textbox", name: "Email", exact: true }, value: "qa@example.com" } },
+      { kind: "action", label: "submit", action: { type: "click", locator: { strategy: "role", role: "button", name: "Primary action", exact: true } } },
+      { kind: "scroll", label: "center target", checkpoint: { kind: "element", locator: { strategy: "css", selector: "#scroll-target" }, align: "center" } },
+      { kind: "scroll", label: "measure target", checkpoint: { kind: "measure", locator: { strategy: "css", selector: "#scroll-target" } } },
+    ],
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.error, null);
+  assert.equal(result.steps.length, 4);
+  assert.equal(result.steps.every((step) => step.status === "completed"), true);
+  assert.equal(result.initial.structure.find((element) => element.selector === "p#status")?.text, "idle");
+  assert.equal(result.steps[1].capture.structure.find((element) => element.selector === "p#status")?.text, "clicked:qa@example.com");
+  assert.ok(Math.abs(result.steps[2].result.measurement.centerOffsetPx) <= 2);
+  assert.ok(Math.abs(result.steps[3].result.measurement.centerOffsetPx) <= 2);
+  assert.ok(result.initial.screenshotBase64.length > 100);
+  for (const step of result.steps) assert.ok(step.capture.screenshotBase64.length > 100);
+});
+
+test("runScenario stops on an ambiguous locator and preserves failure-state evidence", { timeout: 30_000 }, async (t) => {
+  const fixture = await startFixtureServer();
+  t.after(() => new Promise((resolve) => fixture.server.close(resolve)));
+
+  const runner = new BrowserRunner({ allowPrivateTargets: true });
+  const result = await runner.runScenario({
+    url: fixture.url,
+    viewport: { width: 900, height: 700 },
+    steps: [
+      { kind: "action", action: { type: "click", locator: { strategy: "role", role: "button", name: "Primary action", exact: true } } },
+      { kind: "action", action: { type: "click", locator: { strategy: "text", text: "Continue", exact: true } } },
+      { kind: "scroll", checkpoint: { kind: "progress", progress: 0.5 } },
+    ],
+  });
+
+  assert.equal(result.status, "failed");
+  assert.match(result.error, /match exactly one element; matched 2/);
+  assert.equal(result.steps.length, 2);
+  assert.equal(result.steps[0].status, "completed");
+  assert.equal(result.steps[1].status, "failed");
+  assert.match(result.steps[1].error, /matched 2/);
+  assert.equal(result.steps[1].capture.structure.find((element) => element.selector === "p#status")?.text, "clicked");
+  assert.ok(result.steps[1].capture.screenshotBase64.length > 100);
 });
