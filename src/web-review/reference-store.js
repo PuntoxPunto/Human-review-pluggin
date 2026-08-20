@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { createStateMap } from "../state-map.js";
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
 export class ReferenceComparisonStore {
-  #comparisons = new Map();
+  #comparisons = createStateMap("web-reference-comparisons");
 
   put({ referenceEvidenceId, candidateEvidenceId, result }) {
     const id = `refcmp_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
