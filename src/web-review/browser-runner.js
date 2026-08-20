@@ -59,9 +59,9 @@ export class BrowserRunner {
 
       await page.goto(safeUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
       try {
-        await page.waitForLoadState("networkidle", { timeout: Math.min(5_000, timeoutMs) });
+        await page.waitForLoadState("load", { timeout: Math.min(5_000, timeoutMs) });
       } catch {
-        // Long-lived connections are common; DOMContentLoaded remains the hard gate.
+        // Some apps keep secondary resources pending; DOMContentLoaded remains the hard gate.
       }
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
@@ -115,7 +115,7 @@ export class BrowserRunner {
         };
       });
 
-      const screenshot = await page.screenshot({ type: "png", fullPage: false, animations: "disabled" });
+      const screenshot = await page.screenshot({ type: "png", fullPage: false, animations: "allow", scale: "css" });
       return {
         finalUrl: page.url(),
         title: metadata.title,
