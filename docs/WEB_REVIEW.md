@@ -1,4 +1,4 @@
-# Web Review — M1 through M9
+# Web Review — M1 through M10
 
 Web Review extends Human Review with live-browser QA for public staging URLs using reproducible Playwright evidence. Human Review remains the source of truth for direct human HTML edits.
 
@@ -42,135 +42,160 @@ Web Review extends Human Review with live-browser QA for public staging URLs usi
 
 ### M9 — human-gated multimodal visual critic
 
-- `get_web_visual_critic_context` returns the immutable screenshot plus compact visible-element anchors
-- ChatGPT itself performs the multimodal judgment; the plugin does not make a second model/API call
-- `submit_web_visual_findings` stores structured perceptual proposals tied to the selected evidence
-- visual proposals may be page-level or anchored to an exact evidence path/selector
-- optional target/related anchors must resolve exactly one evidence element
-- visual finding severity is restricted to `info|warning|error`; visual proposals cannot self-declare `critical`
-- visual confidence is capped at `0.90`
-- FindingStore is partitioned by provenance: `deterministic` and `visual_critic`
-- refreshing one source never deletes the other source
-- fingerprints include source so deterministic and perceptual findings cannot collide
-- human Accept/Reject/comments survive re-submission within each source
-- submitting visual findings ensures a deterministic geometry partition exists for the evidence
-- cockpit v3 shows source badges and uses solid overlays for deterministic findings, dashed overlays for visual-critic findings
-- the cockpit explicitly labels visual findings as lower-trust until a human accepts them
+- `get_web_visual_critic_context`
+- `submit_web_visual_findings`
+- ChatGPT performs multimodal judgment over immutable evidence; the plugin does not call another model/API
+- visual proposals are `info|warning|error`, confidence capped at `0.90`
+- provenance partitioning: `deterministic` and `visual_critic`
+- refreshing one source never deletes the other
+- cockpit v3 distinguishes measured vs perceptual findings
 
-Still deferred:
+### M10 — reference / baseline comparison
 
-- automatic recovery/replay inside a failed stateful scenario;
-- reference/baseline comparison;
-- autonomous fix/deploy/retest.
+- `compare_web_evidence`
+- `get_web_reference_comparison`
+- `submit_web_reference_findings`
+- compares two immutable evidence snapshots only when viewport dimensions are identical
+- reference and candidate may belong to different Web Reviews / staging URLs
+- deterministic comparison reports matched, added, removed and materially changed DOM targets
+- changed targets include exact position/size deltas plus text-change state
+- comparison also reports scroll and document-dimension deltas
+- the comparison result is stored separately from findings and preserves the raw objective delta history
+- both screenshots are returned in explicit order: reference first, candidate second
+- a raw difference is never automatically classified as a regression
+- ChatGPT may interpret the pair multimodally and submit `reference_critic` proposals
+- `reference_critic` severity is limited to `info|warning|error`; confidence is capped at `0.90`
+- optional target paths must resolve exactly one element in the candidate evidence
+- `reference_critic` findings are stored on the candidate evidence and require Human Accept/Reject before implementation
+- the active baseline interpretation replaces only the candidate's `reference_critic` partition; deterministic and `visual_critic` findings are preserved
+- reference fingerprints include `comparisonId`, so decisions survive re-submission of the same comparison but do not leak to a different baseline
+- cockpit v4 renders three provenance classes: deterministic, visual critic and baseline critic
 
 ## Architecture
 
 ```text
 ChatGPT semantic + multimodal reasoning
   |
-  +-- deterministic Human/Web Review tools
-  |     +-- BrowserRunner -> Playwright / Chromium
-  |     +-- EvidenceStore
-  |     +-- Geometry Analyzer
+  +-- Playwright / Chromium
+  |     +-- immutable EvidenceStore
+  |     +-- geometry measurements
   |     +-- actions / scroll / scenarios
-  |     +-- recovery verification / recipes
   |
-  +-- visual critic protocol
-        +-- immutable screenshot context
-        +-- structured visual proposals
-        +-- FindingStore source partition
-        +-- human accept / reject / comments
-        +-- Web Review cockpit v3
+  +-- semantic recovery
+  |     +-- candidate reasoning
+  |     +-- exact Chromium verification
+  |     +-- reusable recipes
+  |
+  +-- visual review
+  |     +-- visual_critic
+  |     +-- human decisions
+  |
+  +-- baseline review
+        +-- reference evidence
+        +-- candidate evidence
+        +-- deterministic structural deltas
+        +-- multimodal reference_critic
+        +-- human decisions
 ```
 
 ## Evidence and trust invariant
 
-Raw browser evidence is immutable. Every derived layer references an evidence ID.
+Raw browser evidence is immutable. Derived interpretation never changes the underlying screenshots or browser measurements.
 
 ```text
-browser measurement / evidence
+browser measurement / exact evidence
         > accepted human interpretation
-        > unaccepted visual-critic proposal
+        > unaccepted visual/reference critic proposal
         > model assumption
 ```
 
-Human decisions control whether a derived finding becomes an implementation task. A rejected finding must never be applied.
+A raw difference between baseline and candidate proves change, not defect.
+
+## Baseline comparison contract
+
+A valid comparison requires identical viewport width and height. This prevents the system from presenting responsive-layout differences as if they were regressions from one state.
+
+```text
+reference evidence
+       +
+ candidate evidence
+       ↓
+compare_web_evidence
+       ↓
+objective deltas
+  matched / changed
+  added / removed
+  scroll delta
+  document delta
+       +
+reference screenshot → candidate screenshot
+       ↓
+ChatGPT multimodal interpretation
+       ↓
+submit_web_reference_findings
+       ↓
+reference_critic on candidate
+       ↓
+Human Accept / Reject / Comment
+```
+
+The reference and candidate can come from different URLs or reviews, which permits approved-production-vs-staging and previous-release-vs-current comparisons.
+
+### Material geometry delta
+
+For a matched DOM path, M10 records a changed element when text changes or when position/size changes by more than 2 px on any measured axis.
+
+```text
+dx = candidate.left   - reference.left
+dy = candidate.top    - reference.top
+dw = candidate.width  - reference.width
+dh = candidate.height - reference.height
+```
+
+These values are evidence. Whether the movement is desirable remains a review decision.
 
 ## Finding provenance
 
-Every stored finding has a source:
-
 ```text
-deterministic
-visual_critic
+deterministic      browser-measured single-state issues
+visual_critic      perceptual issues in one evidence snapshot
+reference_critic   perceptual regression interpretation against a baseline
 ```
 
-`replaceForEvidence(... source="deterministic")` replaces only deterministic findings. `source="visual_critic"` replaces only visual proposals. Matching fingerprints preserve IDs, decisions and comments within that source.
+Source partitions cannot overwrite one another. Human decisions/comments survive matching reanalysis within the same provenance and comparison context.
 
-This prevents a geometry refresh from erasing multimodal review and prevents a new critic pass from rewriting browser-measured truth.
-
-## Visual critic protocol
+## Cockpit v4
 
 ```text
-select immutable evidence / checkpoint
-        ↓
-get_web_visual_critic_context
-        ↓
-ChatGPT inspects screenshot + anchors
-        ↓
-submit_web_visual_findings
-        ↓
-visual_critic findings in cockpit
-        ↓
-human Accept / Reject / Comment
-        ↓
-accepted findings may become implementation work
+solid overlay    deterministic
+dashed overlay   visual critic
+dotted overlay   baseline critic
 ```
 
-The critic should identify perceptual problems geometry alone cannot prove: weak hierarchy, inconsistent spacing rhythm, poor composition, typography imbalance, low perceived contrast, awkward animation state, confusing affordance, visually undesirable overlap, or reference mismatch.
-
-It should not duplicate deterministic overflow/clipping merely because those issues are already visible in the screenshot.
-
-## Locator and recovery contract
-
-Normal browser execution still requires exact role+name, exact visible text, or CSS with exactly one match. Semantic recovery can propose a candidate but cannot execute it until deterministic Chromium verification succeeds.
-
-## Scroll/framing semantics
-
-`center_offset_px = 0` means exact vertical center; positive means too low and negative means too high. Positioning checkpoints temporarily neutralize smooth-scroll only to choose the observation state; visual animations remain enabled.
-
-## Cockpit v3
-
-The cockpit displays deterministic and visual findings together but keeps their provenance visible:
-
-```text
-solid overlay   deterministic
- dashed overlay  visual critic
-```
-
-Both sources use the same human decision workflow. The UI handoff instructs ChatGPT to act only on accepted findings and to treat deterministic measurements as stronger evidence than unaccepted critic proposals.
+All three use the same Human Accept / Reject / Reset / Comment workflow. The handoff back to ChatGPT explicitly requires acting only on accepted findings.
 
 ## Security boundary
 
-Production targets remain restricted to public HTTP(S); private/reserved destinations and blocked subrequests are rejected. No arbitrary JavaScript evaluation tool is exposed to the model. Browser execution should ultimately run in an isolated worker/container with egress controls, quotas and authorization.
+Production targets remain restricted to public HTTP(S); private/reserved destinations and blocked subrequests are rejected. No arbitrary JavaScript evaluation tool is exposed to the model. Baseline comparison operates only on evidence already captured by the bounded browser layer.
 
 ## Acceptance gates
 
-All M1–M8 gates remain mandatory.
+All M1–M9 gates remain mandatory.
 
-M9 additionally requires CI to prove:
+M10 additionally requires CI to prove:
 
-1. `get_web_visual_critic_context` is model-visible, read-only and closed-world;
-2. `submit_web_visual_findings` is model-visible, state-writing, closed-world and idempotent;
-3. the Web Review resource is independently versioned to cockpit v3;
-4. deterministic and visual partitions coexist without overwriting one another;
-5. deterministic refresh preserves visual findings and their human decisions/comments;
-6. visual re-submission preserves matching visual finding decisions/comments and leaves deterministic findings untouched;
-7. source-aware summary counts remain correct;
-8. visual schema excludes `critical` severity and caps confidence at 0.90;
-9. cockpit v3 renders deterministic/visual provenance and source-aware handoff language;
-10. all prior Human Review, Chromium, recovery and AppDeploy gates remain green.
+1. `compare_web_evidence`, `get_web_reference_comparison`, and `submit_web_reference_findings` are discoverable with correct closed-world read/write annotations;
+2. identical viewport dimensions are mandatory;
+3. deterministic comparison correctly separates matched, changed, added and removed elements;
+4. text changes and measurable geometry deltas are preserved as explicit evidence;
+5. scroll and document-size differences are reported separately;
+6. stored comparison metadata preserves reference/candidate evidence lineage;
+7. `reference_critic` decisions/comments survive re-submission of the same comparison;
+8. a different comparison ID does not inherit a previous baseline decision;
+9. deterministic and visual-critic partitions survive reference-critic refreshes;
+10. cockpit v4 exposes baseline provenance and source-aware human handoff;
+11. all previous Human Review, Chromium, semantic recovery, visual critic and AppDeploy gates remain green.
 
 ## Next slice
 
-M10 should add reference/baseline comparison: associate evidence with a reference screenshot or prior accepted evidence, compare the same viewport/checkpoint states, and let the multimodal critic propose evidence-backed differences without turning raw pixel difference into automatic design truth.
+M11 should begin the bounded correction loop: convert only accepted findings into a fix plan, modify a candidate artifact through an authorized code/deploy integration, capture fresh evidence, and compare the post-fix candidate against its pre-fix evidence/baseline before declaring success. The first version should remain human-gated and stop before any autonomous merge or production deployment.

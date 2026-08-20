@@ -3,6 +3,7 @@ import { z } from "zod";
 import { analyzeGeometry } from "./geometry.js";
 import { registerWebRecoveryTools } from "./recovery-tools.js";
 import { registerWebVisualCriticTools } from "./visual-critic-tools.js";
+import { registerWebReferenceTools } from "./reference-tools.js";
 
 const NOAUTH = [{ type: "noauth" }];
 const viewportSchema = z.object({
@@ -131,4 +132,5 @@ export function registerWebActionTools(server, { reviewStore, evidenceStore, fin
 
   registerWebRecoveryTools(server, { reviewStore, evidenceStore, findingStore, runner });
   registerWebVisualCriticTools(server, { reviewStore, evidenceStore, findingStore });
+  registerWebReferenceTools(server, { reviewStore, evidenceStore, findingStore });
 }
