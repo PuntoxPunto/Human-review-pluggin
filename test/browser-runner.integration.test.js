@@ -8,7 +8,10 @@ async function startFixtureServer() {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end(`<!doctype html>
       <html>
-        <head><title>Web Review Fixture</title></head>
+        <head>
+          <title>Web Review Fixture</title>
+          <style>html { scroll-behavior: smooth; }</style>
+        </head>
         <body style="margin:0">
           <main>
             <h1 id="headline">Evidence works</h1>
@@ -108,7 +111,7 @@ test("runAction refuses an ambiguous exact locator instead of guessing", { timeo
   );
 });
 
-test("runScrollCheckpoints captures progress and exact element centering in one Chromium session", { timeout: 30_000 }, async (t) => {
+test("runScrollCheckpoints captures progress and exact element centering despite page smooth-scroll CSS", { timeout: 30_000 }, async (t) => {
   const fixture = await startFixtureServer();
   t.after(() => new Promise((resolve) => fixture.server.close(resolve)));
 
