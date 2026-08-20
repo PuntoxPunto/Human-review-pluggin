@@ -41,7 +41,7 @@ window.addEventListener("message", (event) => {
 const bridgeReady = (async () => {
   try {
     await rpcRequest("ui/initialize", {
-      appInfo: { name: "web-review-widget", version: "0.3.0" },
+      appInfo: { name: "web-review-widget", version: "0.4.0" },
       appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
       protocolVersion: "2026-01-26",
     });
@@ -91,11 +91,14 @@ function sourceOf(finding) {
 }
 
 function sourceLabel(finding) {
-  return sourceOf(finding) === "visual_critic" ? "visual critic" : "deterministic";
+  const source = sourceOf(finding);
+  if (source === "visual_critic") return "visual critic";
+  if (source === "reference_critic") return "baseline critic";
+  return "deterministic";
 }
 
 function findingCounts() {
-  const counts = { total: state.findings.length, info: 0, warning: 0, error: 0, critical: 0, new: 0, accepted: 0, rejected: 0, deterministic: 0, visual_critic: 0 };
+  const counts = { total: state.findings.length, info: 0, warning: 0, error: 0, critical: 0, new: 0, accepted: 0, rejected: 0, deterministic: 0, visual_critic: 0, reference_critic: 0 };
   for (const finding of state.findings) {
     if (Object.hasOwn(counts, finding.severity)) counts[finding.severity] += 1;
     if (Object.hasOwn(counts, finding.status)) counts[finding.status] += 1;
@@ -121,6 +124,7 @@ function render() {
     `<span class="pill">${counts.total} total</span>`,
     counts.deterministic ? `<span class="pill">${counts.deterministic} deterministic</span>` : "",
     counts.visual_critic ? `<span class="pill">${counts.visual_critic} visual</span>` : "",
+    counts.reference_critic ? `<span class="pill">${counts.reference_critic} baseline</span>` : "",
     counts.error ? `<span class="pill">${counts.error} error</span>` : "",
     counts.warning ? `<span class="pill">${counts.warning} warning</span>` : "",
     counts.accepted ? `<span class="pill">${counts.accepted} accepted</span>` : "",
@@ -164,11 +168,16 @@ function renderDecisionPanel() {
   const comments = Array.isArray(finding.comments) ? finding.comments : [];
   const target = finding.target?.path || finding.target?.selector || "Page-level finding";
   const source = sourceOf(finding);
+  const trustNote = source === "visual_critic"
+    ? "Perceptual proposal from one screenshot; lower trust than deterministic browser measurements until accepted by a human."
+    : source === "reference_critic"
+      ? `Baseline-regression proposal${finding.referenceEvidenceId ? ` against ${finding.referenceEvidenceId}` : ""}; a measured difference is not automatically a regression and still requires human acceptance.`
+      : "";
   panel.innerHTML = `
     <div class="decision">
       <h2>${escapeHtml(finding.title)} · ${escapeHtml(finding.status || "new")} <span class="source ${source}">${escapeHtml(sourceLabel(finding))}</span></h2>
       <div class="target">${escapeHtml(target)}</div>
-      ${source === "visual_critic" ? '<div class="target">Perceptual proposal; lower trust than deterministic browser measurements until accepted by a human.</div>' : ""}
+      ${trustNote ? `<div class="target">${escapeHtml(trustNote)}</div>` : ""}
       ${comments.length ? `<div class="comments">${comments.map((comment) => `<div class="comment">${escapeHtml(comment.text)}</div>`).join("")}</div>` : ""}
       <textarea id="decisionComment" placeholder="Optional instruction or context for ChatGPT"></textarea>
       <div class="decision-actions">
@@ -244,7 +253,7 @@ async function sendDecisions() {
   const button = $("sendDecisions");
   button.disabled = true;
   button.textContent = "Sending…";
-  const prompt = `Read Web Review findings for evidence ${state.evidence.id}. Act only on accepted findings and explicit human comments. Do not apply rejected findings. Preserve the browser evidence as the verification baseline and respect each finding's source: deterministic measurements outrank visual-critic proposals unless the human explicitly accepts the visual finding.`;
+  const prompt = `Read Web Review findings for evidence ${state.evidence.id}. Act only on accepted findings and explicit human comments. Do not apply rejected findings. Preserve immutable browser evidence and respect provenance: deterministic measurements are observations; visual_critic findings are single-state perceptual proposals; reference_critic findings are baseline-regression interpretations where a measured difference is not automatically a defect. Human decisions override model assumptions.`;
   try {
     if (window.openai?.sendFollowUpMessage) {
       await window.openai.sendFollowUpMessage({ prompt, scrollToBottom: true });
