@@ -3,6 +3,7 @@ import { z } from "zod";
 import { analyzeGeometry } from "./geometry.js";
 import { compareEvidence } from "./reference-compare.js";
 import { FixPlanStore } from "./fix-plan-store.js";
+import { FIX_REVIEW_TEMPLATE_URI } from "./ui.js";
 
 const NOAUTH = [{ type: "noauth" }];
 const fixPlanStore = new FixPlanStore();
@@ -151,7 +152,7 @@ export function registerWebFixTools(server, { reviewStore, evidenceStore, findin
 
   registerAppTool(server, "get_web_fix_plan", {
     title: "Read Web Review fix plan",
-    description: "Read a human-gated fix plan, its frozen accepted findings, and all verification attempts.",
+    description: "Read a human-gated fix plan, its frozen accepted findings, all verification attempts, automatic assessments, and human Fix Review decisions.",
     inputSchema: { fix_plan_id: z.string().min(1) },
     outputSchema: { fix_plan: z.record(z.string(), z.any()) },
     securitySchemes: NOAUTH,
@@ -239,10 +240,100 @@ export function registerWebFixTools(server, { reviewStore, evidenceStore, findin
         comparison,
       },
       content: [
-        { type: "text", text: `Fix attempt ${stored.attempt.id}: ${resolvedCount} deterministically resolved, ${unresolvedCount} unresolved, ${needsReviewCount} require visual/human review. Status: ${status}. Original image is first; post-fix image is second.` },
+        { type: "text", text: `Fix attempt ${stored.attempt.id}: ${resolvedCount} deterministically resolved, ${unresolvedCount} unresolved, ${needsReviewCount} require visual/human review. Status: ${status}.${needsReviewCount ? ` Call open_web_fix_review for plan ${fix_plan_id} and attempt ${stored.attempt.id}.` : ""} Original image is first; post-fix image is second.` },
         { type: "image", data: baseEvidence.screenshotBase64, mimeType: baseEvidence.screenshotMimeType },
         { type: "image", data: postEvidence.screenshotBase64, mimeType: postEvidence.screenshotMimeType },
       ],
+    };
+  });
+
+  registerAppTool(server, "open_web_fix_review", {
+    title: "Open human Fix Review",
+    description: "Open the latest or selected fix attempt in a side-by-side before/after cockpit. Human controls are available only for items whose automatic status is needs_review; deterministic resolved/unresolved results are locked.",
+    inputSchema: {
+      fix_plan_id: z.string().min(1),
+      attempt_id: z.string().min(1).optional(),
+    },
+    outputSchema: {
+      fix_plan_id: z.string(),
+      attempt_id: z.string(),
+      status: z.enum(["verified", "needs_review", "unresolved"]),
+      automatic_status: z.enum(["verified", "needs_review", "unresolved"]),
+      item_count: z.number().int(),
+      automatic_needs_review_count: z.number().int(),
+      review_decision_count: z.number().int(),
+    },
+    securitySchemes: NOAUTH,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+    _meta: {
+      securitySchemes: NOAUTH,
+      ui: { resourceUri: FIX_REVIEW_TEMPLATE_URI, visibility: ["model"] },
+      "openai/outputTemplate": FIX_REVIEW_TEMPLATE_URI,
+      "openai/toolInvocation/invoking": "Opening Fix Review…",
+      "openai/toolInvocation/invoked": "Fix Review ready",
+    },
+  }, async ({ fix_plan_id, attempt_id }) => {
+    const plan = fixPlanStore.get(fix_plan_id);
+    const attempt = fixPlanStore.getAttempt(fix_plan_id, attempt_id || null);
+    const baseEvidence = evidenceStore.get(attempt.baseEvidenceId, { includeScreenshot: true });
+    const postEvidence = evidenceStore.get(attempt.postFixEvidenceId, { includeScreenshot: true });
+    const automaticNeedsReview = attempt.results.filter((result) => result.status === "needs_review").length;
+    return {
+      structuredContent: {
+        fix_plan_id,
+        attempt_id: attempt.id,
+        status: attempt.status,
+        automatic_status: attempt.automaticStatus || attempt.status,
+        item_count: plan.items.length,
+        automatic_needs_review_count: automaticNeedsReview,
+        review_decision_count: attempt.reviewDecisions?.length || 0,
+      },
+      content: [{ type: "text", text: `Opened Fix Review ${attempt.id}. Automatic status: ${attempt.automaticStatus || attempt.status}; current status after human decisions: ${attempt.status}.` }],
+      _meta: {
+        fix_review: {
+          plan,
+          attempt,
+          baseEvidence,
+          postEvidence,
+        },
+      },
+    };
+  });
+
+  registerAppTool(server, "set_web_fix_item_decision", {
+    title: "Save human Fix Review decision",
+    description: "Internal Fix Review cockpit action. Records a human resolved/unresolved/reset decision only for an item whose automatic status is needs_review. Deterministic resolved/unresolved results cannot be overridden.",
+    inputSchema: {
+      fix_plan_id: z.string().min(1),
+      attempt_id: z.string().min(1),
+      finding_id: z.string().min(1),
+      status: z.enum(["resolved", "unresolved", "needs_review"]),
+      comment: z.string().max(4000).optional(),
+    },
+    outputSchema: {
+      fix_plan_id: z.string(),
+      attempt_id: z.string(),
+      status: z.enum(["verified", "needs_review", "unresolved"]),
+      attempt: z.record(z.string(), z.any()),
+    },
+    securitySchemes: NOAUTH,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+    _meta: {
+      securitySchemes: NOAUTH,
+      ui: { visibility: ["app"] },
+      "openai/widgetAccessible": true,
+      "openai/visibility": "private",
+    },
+  }, async ({ fix_plan_id, attempt_id, finding_id, status, comment }) => {
+    const reviewed = fixPlanStore.reviewAttemptItem(fix_plan_id, attempt_id, finding_id, { status, comment });
+    return {
+      structuredContent: {
+        fix_plan_id,
+        attempt_id,
+        status: reviewed.attempt.status,
+        attempt: reviewed.attempt,
+      },
+      content: [{ type: "text", text: `Saved human Fix Review decision ${status} for ${finding_id}. Attempt status is now ${reviewed.attempt.status}.` }],
     };
   });
 }
