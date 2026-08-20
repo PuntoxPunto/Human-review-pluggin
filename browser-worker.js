@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { BrowserRunner } from "./src/web-review/browser-runner.js";
 
 const TOKEN = String(process.env.BROWSER_WORKER_TOKEN || "");
@@ -9,10 +9,23 @@ const PORT = Number(process.env.PORT || process.env.BROWSER_WORKER_PORT || 8890)
 const MAX_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.BROWSER_WORKER_MAX_CONCURRENCY || 2)));
 const MAX_BODY_BYTES = Math.max(16_384, Math.min(1_048_576, Number(process.env.BROWSER_WORKER_MAX_BODY_BYTES || 524_288)));
 const MAX_OPERATION_TIMEOUT_MS = Math.max(5_000, Math.min(120_000, Number(process.env.BROWSER_WORKER_MAX_OPERATION_TIMEOUT_MS || 45_000)));
+const MAX_REQUESTS_PER_MINUTE = Math.max(1, Math.min(10_000, Number(process.env.BROWSER_WORKER_MAX_REQUESTS_PER_MINUTE || 60)));
 const ALLOW_PRIVATE = process.env.BROWSER_WORKER_ALLOW_PRIVATE === "true";
 const OPERATIONS = new Set(["capture", "runAction", "runScrollCheckpoints", "runScenario"]);
 const runner = new BrowserRunner({ allowPrivateTargets: ALLOW_PRIVATE });
 let activeJobs = 0;
+let rateWindowStartedAt = Date.now();
+let rateWindowCount = 0;
+const metrics = {
+  jobsStarted: 0,
+  jobsSucceeded: 0,
+  jobsFailed: 0,
+  rejectedAuth: 0,
+  rejectedRate: 0,
+  rejectedConcurrency: 0,
+  totalDurationMs: 0,
+  byOperation: Object.fromEntries([...OPERATIONS].map((name) => [name, 0])),
+};
 
 function authorized(header) {
   const prefix = "Bearer ";
@@ -22,14 +35,35 @@ function authorized(header) {
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
 
-function json(res, status, body) {
+function requestId(req) {
+  const supplied = String(req.headers["x-request-id"] || "");
+  return /^[A-Za-z0-9._:-]{1,128}$/.test(supplied) ? supplied : `browserreq_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
+}
+
+function json(res, status, body, id = null) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     "content-type": "application/json",
     "content-length": Buffer.byteLength(payload),
     "cache-control": "no-store",
+    ...(id ? { "x-request-id": id } : {}),
   });
   res.end(payload);
+}
+
+function log(event, fields = {}) {
+  console.log(JSON.stringify({ timestamp: new Date().toISOString(), service: "web-review-browser-worker", event, ...fields }));
+}
+
+function rateAllowed() {
+  const now = Date.now();
+  if (now - rateWindowStartedAt >= 60_000) {
+    rateWindowStartedAt = now;
+    rateWindowCount = 0;
+  }
+  if (rateWindowCount >= MAX_REQUESTS_PER_MINUTE) return false;
+  rateWindowCount += 1;
+  return true;
 }
 
 async function readJson(req) {
@@ -55,7 +89,31 @@ function boundedPayload(payload) {
   return next;
 }
 
+function prometheusMetrics() {
+  const lines = [
+    "# TYPE web_review_browser_jobs_started_total counter",
+    `web_review_browser_jobs_started_total ${metrics.jobsStarted}`,
+    "# TYPE web_review_browser_jobs_succeeded_total counter",
+    `web_review_browser_jobs_succeeded_total ${metrics.jobsSucceeded}`,
+    "# TYPE web_review_browser_jobs_failed_total counter",
+    `web_review_browser_jobs_failed_total ${metrics.jobsFailed}`,
+    "# TYPE web_review_browser_rejected_total counter",
+    `web_review_browser_rejected_total{reason=\"auth\"} ${metrics.rejectedAuth}`,
+    `web_review_browser_rejected_total{reason=\"rate\"} ${metrics.rejectedRate}`,
+    `web_review_browser_rejected_total{reason=\"concurrency\"} ${metrics.rejectedConcurrency}`,
+    "# TYPE web_review_browser_active_jobs gauge",
+    `web_review_browser_active_jobs ${activeJobs}`,
+    "# TYPE web_review_browser_job_duration_ms_total counter",
+    `web_review_browser_job_duration_ms_total ${metrics.totalDurationMs}`,
+  ];
+  for (const [operation, count] of Object.entries(metrics.byOperation)) {
+    lines.push(`web_review_browser_operation_total{operation=\"${operation}\"} ${count}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 const server = createServer(async (req, res) => {
+  const id = requestId(req);
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   if (req.method === "GET" && url.pathname === "/health") {
     return json(res, 200, {
@@ -63,31 +121,65 @@ const server = createServer(async (req, res) => {
       service: "web-review-browser-worker",
       active_jobs: activeJobs,
       max_concurrency: MAX_CONCURRENCY,
+      max_requests_per_minute: MAX_REQUESTS_PER_MINUTE,
       target_policy: ALLOW_PRIVATE ? "private-allowed-test-mode" : "public-http-only",
       operations: [...OPERATIONS],
-    });
+      totals: { started: metrics.jobsStarted, succeeded: metrics.jobsSucceeded, failed: metrics.jobsFailed },
+    }, id);
   }
-  if (req.method !== "POST" || url.pathname !== "/v1/browser/run") return json(res, 404, { ok: false, error: "Not found." });
-  if (!authorized(req.headers.authorization)) return json(res, 401, { ok: false, error: "Unauthorized." });
-  if (activeJobs >= MAX_CONCURRENCY) return json(res, 429, { ok: false, error: "Browser worker concurrency limit reached." });
+  if (req.method === "GET" && url.pathname === "/metrics") {
+    if (!authorized(req.headers.authorization)) {
+      metrics.rejectedAuth += 1;
+      return json(res, 401, { ok: false, error: "Unauthorized." }, id);
+    }
+    const payload = prometheusMetrics();
+    res.writeHead(200, { "content-type": "text/plain; version=0.0.4", "content-length": Buffer.byteLength(payload), "cache-control": "no-store", "x-request-id": id });
+    return res.end(payload);
+  }
+  if (req.method !== "POST" || url.pathname !== "/v1/browser/run") return json(res, 404, { ok: false, error: "Not found." }, id);
+  if (!authorized(req.headers.authorization)) {
+    metrics.rejectedAuth += 1;
+    log("request_rejected", { request_id: id, reason: "auth" });
+    return json(res, 401, { ok: false, error: "Unauthorized." }, id);
+  }
+  if (!rateAllowed()) {
+    metrics.rejectedRate += 1;
+    log("request_rejected", { request_id: id, reason: "rate" });
+    return json(res, 429, { ok: false, error: "Browser worker rate limit reached." }, id);
+  }
+  if (activeJobs >= MAX_CONCURRENCY) {
+    metrics.rejectedConcurrency += 1;
+    log("request_rejected", { request_id: id, reason: "concurrency", active_jobs: activeJobs });
+    return json(res, 429, { ok: false, error: "Browser worker concurrency limit reached." }, id);
+  }
 
   activeJobs += 1;
+  const startedAt = Date.now();
+  let operation = "unknown";
   try {
     const body = await readJson(req);
-    const operation = String(body.operation || "");
-    if (!OPERATIONS.has(operation)) return json(res, 400, { ok: false, error: "Unsupported browser operation." });
+    operation = String(body.operation || "");
+    if (!OPERATIONS.has(operation)) return json(res, 400, { ok: false, error: "Unsupported browser operation." }, id);
+    metrics.jobsStarted += 1;
+    metrics.byOperation[operation] += 1;
+    log("job_started", { request_id: id, operation, active_jobs: activeJobs });
     const payload = boundedPayload(body.payload);
     const result = await runner[operation](payload);
-    return json(res, 200, { ok: true, result });
+    metrics.jobsSucceeded += 1;
+    return json(res, 200, { ok: true, result }, id);
   } catch (error) {
+    metrics.jobsFailed += 1;
     const status = Number(error?.statusCode || 500);
     const safeStatus = status >= 400 && status < 600 ? status : 500;
-    return json(res, safeStatus, { ok: false, error: String(error?.message || error || "Browser worker error").slice(0, 2000) });
+    return json(res, safeStatus, { ok: false, error: String(error?.message || error || "Browser worker error").slice(0, 2000) }, id);
   } finally {
+    const durationMs = Date.now() - startedAt;
+    metrics.totalDurationMs += durationMs;
     activeJobs -= 1;
+    log("job_finished", { request_id: id, operation, duration_ms: durationMs, active_jobs: activeJobs });
   }
 });
 
 server.listen(PORT, () => {
-  console.log(`Web Review browser worker listening on http://localhost:${PORT}`);
+  log("worker_started", { port: PORT, max_concurrency: MAX_CONCURRENCY, max_requests_per_minute: MAX_REQUESTS_PER_MINUTE, target_policy: ALLOW_PRIVATE ? "private-allowed-test-mode" : "public-http-only" });
 });
