@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { BrowserRunner } from "./browser-runner.js";
 
 const OPERATIONS = new Set(["capture", "runAction", "runScrollCheckpoints", "runScenario"]);
@@ -23,6 +24,10 @@ function operationEndpoint(baseUrl) {
   return endpoint;
 }
 
+function newRequestId() {
+  return `browserreq_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
+}
+
 export class RemoteBrowserRunner {
   constructor({ baseUrl, token, fetchImpl = globalThis.fetch, requestTimeoutMs = DEFAULT_REMOTE_TIMEOUT_MS, allowInsecure = false } = {}) {
     if (!baseUrl) throw new Error("Remote browser runner requires baseUrl.");
@@ -37,6 +42,7 @@ export class RemoteBrowserRunner {
   async #call(operation, payload) {
     if (!OPERATIONS.has(operation)) throw new Error(`Unsupported remote browser operation: ${operation}.`);
     const endpoint = operationEndpoint(this.baseUrl);
+    const requestId = newRequestId();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error("Remote browser runner request timed out.")), this.requestTimeoutMs);
     try {
@@ -46,27 +52,29 @@ export class RemoteBrowserRunner {
           "content-type": "application/json",
           "accept": "application/json",
           "authorization": `Bearer ${this.token}`,
+          "x-request-id": requestId,
         },
         body: JSON.stringify({ operation, payload }),
         signal: controller.signal,
       });
+      const responseRequestId = response.headers.get("x-request-id") || requestId;
       const contentLength = Number(response.headers.get("content-length") || 0);
-      if (contentLength > MAX_RESPONSE_BYTES) throw new Error("Remote browser runner response exceeded the maximum allowed size.");
+      if (contentLength > MAX_RESPONSE_BYTES) throw new Error(`Remote browser runner response exceeded the maximum allowed size [request ${responseRequestId}].`);
       const text = await response.text();
-      if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) throw new Error("Remote browser runner response exceeded the maximum allowed size.");
+      if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) throw new Error(`Remote browser runner response exceeded the maximum allowed size [request ${responseRequestId}].`);
       let body;
       try {
         body = text ? JSON.parse(text) : {};
       } catch {
-        throw new Error(`Remote browser runner returned invalid JSON (HTTP ${response.status}).`);
+        throw new Error(`Remote browser runner returned invalid JSON (HTTP ${response.status}) [request ${responseRequestId}].`);
       }
       if (!response.ok || body.ok === false) {
         const message = String(body.error || `HTTP ${response.status}`).slice(0, 2000);
-        throw new Error(`Remote browser runner failed: ${message}`);
+        throw new Error(`Remote browser runner failed [request ${responseRequestId}]: ${message}`);
       }
       return body.result;
     } catch (error) {
-      if (controller.signal.aborted) throw new Error("Remote browser runner request timed out.");
+      if (controller.signal.aborted) throw new Error(`Remote browser runner request timed out [request ${requestId}].`);
       throw error;
     } finally {
       clearTimeout(timer);
