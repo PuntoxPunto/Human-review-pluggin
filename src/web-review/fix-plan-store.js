@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createStateMap, persistStateMapEntry } from "../state-map.js";
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -19,7 +20,7 @@ export function computeReviewedAttemptStatus(attempt) {
 }
 
 export class FixPlanStore {
-  #plans = new Map();
+  #plans = createStateMap("web-fix-plans");
 
   create({ reviewId, evidenceId, items }) {
     if (!items.length) throw new Error("A fix plan requires at least one accepted finding.");
@@ -68,6 +69,7 @@ export class FixPlanStore {
     plan.attempts.push(stored);
     plan.status = stored.status;
     plan.updatedAt = stored.updatedAt;
+    persistStateMapEntry(this.#plans, id);
     return { plan: clone(plan), attempt: clone(stored) };
   }
 
@@ -97,6 +99,7 @@ export class FixPlanStore {
     attempt.updatedAt = now;
     if (plan.attempts.at(-1)?.id === attempt.id) plan.status = attempt.status;
     plan.updatedAt = now;
+    persistStateMapEntry(this.#plans, id);
     return { plan: clone(plan), attempt: clone(attempt) };
   }
 }
