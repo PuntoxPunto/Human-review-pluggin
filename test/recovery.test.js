@@ -44,6 +44,17 @@ test("recovery context ranks semantically matching interactive evidence first", 
   assert.ok(candidates[0].score > candidates[1].score);
 });
 
+test("recovery ranking normalizes accented Portuguese hints", () => {
+  const evidence = {
+    structure: [
+      element({ tag: "button", selector: "button#acao", path: "main > button", text: "Continuar", name: "Ação principal" }),
+      element({ tag: "button", selector: "button#other", path: "main > button:nth-of-type(2)", text: "Voltar", name: "Outra opção" }),
+    ],
+  };
+  const candidates = buildRecoveryCandidates(evidence, "acao principal", 2);
+  assert.equal(candidates[0].selector, "button#acao");
+});
+
 test("verified recovery recipe keeps identity and increments verification count", () => {
   const store = new RecoveryRecipeStore();
   const base = {
