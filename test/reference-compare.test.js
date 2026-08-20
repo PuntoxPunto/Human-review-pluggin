@@ -102,3 +102,42 @@ test("reference critic decisions persist only for the same comparison fingerprin
   assert.notEqual(newBaseline[0].id, first[0].id);
   assert.equal(newBaseline[0].status, "new");
 });
+
+test("reference critic refresh preserves deterministic and visual critic partitions", () => {
+  const store = new FindingStore();
+  const common = { severity: "warning", confidence: 0.8, target: null, related: null, rect: null, metrics: {} };
+  store.replaceForEvidence({
+    reviewId: "webrev_1",
+    evidenceId: "ev_candidate",
+    source: "deterministic",
+    findings: [{ ...common, source: "deterministic", type: "overflow", title: "Overflow", description: "Measured overflow." }],
+  });
+  store.replaceForEvidence({
+    reviewId: "webrev_1",
+    evidenceId: "ev_candidate",
+    source: "visual_critic",
+    findings: [{ ...common, source: "visual_critic", type: "weak_hierarchy", title: "Weak hierarchy", description: "Perceptual issue." }],
+  });
+  store.replaceForEvidence({
+    reviewId: "webrev_1",
+    evidenceId: "ev_candidate",
+    source: "reference_critic",
+    findings: [{ ...common, source: "reference_critic", comparisonId: "refcmp_1", referenceEvidenceId: "ev_ref", type: "baseline_regression", title: "Baseline regression", description: "Relative issue." }],
+  });
+
+  assert.equal(store.list("ev_candidate", { source: "deterministic" }).length, 1);
+  assert.equal(store.list("ev_candidate", { source: "visual_critic" }).length, 1);
+  assert.equal(store.list("ev_candidate", { source: "reference_critic" }).length, 1);
+
+  store.replaceForEvidence({
+    reviewId: "webrev_1",
+    evidenceId: "ev_candidate",
+    source: "reference_critic",
+    findings: [{ ...common, source: "reference_critic", comparisonId: "refcmp_2", referenceEvidenceId: "ev_ref_2", type: "baseline_regression", title: "New baseline regression", description: "Different baseline." }],
+  });
+
+  assert.equal(store.list("ev_candidate", { source: "deterministic" }).length, 1);
+  assert.equal(store.list("ev_candidate", { source: "visual_critic" }).length, 1);
+  assert.equal(store.list("ev_candidate", { source: "reference_critic" }).length, 1);
+  assert.equal(store.summary("ev_candidate").reference_critic, 1);
+});
