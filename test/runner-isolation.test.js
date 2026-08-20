@@ -41,7 +41,27 @@ test("production loader swaps only server.js runner import", async () => {
   assert.equal(untouched.url, "next:./browser-runner.js");
 });
 
-test("isolated browser worker requires auth and returns real Chromium evidence", { timeout: 30_000 }, async (t) => {
+test("remote runner emits an end-to-end request id", async () => {
+  let observedRequestId = null;
+  const runner = new RemoteBrowserRunner({
+    baseUrl: "https://runner.example.test",
+    token: TOKEN,
+    fetchImpl: async (_url, init) => {
+      observedRequestId = init.headers["x-request-id"];
+      return new Response(JSON.stringify({ ok: false, error: "synthetic failure" }), {
+        status: 500,
+        headers: { "content-type": "application/json", "x-request-id": observedRequestId },
+      });
+    },
+  });
+  await assert.rejects(() => runner.capture({ url: "https://example.com/" }), (error) => {
+    assert.match(observedRequestId, /^browserreq_[a-f0-9]{20}$/);
+    assert.match(error.message, new RegExp(observedRequestId));
+    return true;
+  });
+});
+
+test("isolated browser worker enforces auth/rate quota and exposes private metrics", { timeout: 30_000 }, async (t) => {
   const fixture = await startFixture();
   t.after(() => fixture.server.close());
 
@@ -53,6 +73,7 @@ test("isolated browser worker requires auth and returns real Chromium evidence",
       BROWSER_WORKER_TOKEN: TOKEN,
       BROWSER_WORKER_ALLOW_PRIVATE: "true",
       BROWSER_WORKER_MAX_CONCURRENCY: "1",
+      BROWSER_WORKER_MAX_REQUESTS_PER_MINUTE: "2",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -60,6 +81,7 @@ test("isolated browser worker requires auth and returns real Chromium evidence",
   const health = await waitForWorker();
   assert.equal(health.ok, true);
   assert.equal(health.max_concurrency, 1);
+  assert.equal(health.max_requests_per_minute, 2);
   assert.match(health.target_policy, /private-allowed-test-mode/);
 
   const unauthorized = new RemoteBrowserRunner({
@@ -104,4 +126,26 @@ test("isolated browser worker requires auth and returns real Chromium evidence",
   assert.ok(configured instanceof RemoteBrowserRunner);
   const configuredCapture = await configured.capture({ url: fixture.url, viewport: { width: 800, height: 600 } });
   assert.equal(configuredCapture.viewport.height, 600);
+
+  await assert.rejects(() => remote.capture({ url: fixture.url }), (error) => {
+    assert.match(error.message, /rate limit/i);
+    assert.match(error.message, /request browserreq_/i);
+    return true;
+  });
+
+  const privateMetrics = await fetch(`http://127.0.0.1:${WORKER_PORT}/metrics`, { headers: { "x-request-id": "metrics-noauth" } });
+  assert.equal(privateMetrics.status, 401);
+  assert.equal(privateMetrics.headers.get("x-request-id"), "metrics-noauth");
+
+  const metrics = await fetch(`http://127.0.0.1:${WORKER_PORT}/metrics`, {
+    headers: { authorization: `Bearer ${TOKEN}`, "x-request-id": "metrics-test-1" },
+  });
+  assert.equal(metrics.status, 200);
+  assert.equal(metrics.headers.get("x-request-id"), "metrics-test-1");
+  const metricsText = await metrics.text();
+  assert.match(metricsText, /web_review_browser_jobs_started_total 2/);
+  assert.match(metricsText, /web_review_browser_jobs_succeeded_total 2/);
+  assert.match(metricsText, /web_review_browser_rejected_total\{reason="auth"\} 2/);
+  assert.match(metricsText, /web_review_browser_rejected_total\{reason="rate"\} 1/);
+  assert.match(metricsText, /web_review_browser_operation_total\{operation="capture"\} 2/);
 });
