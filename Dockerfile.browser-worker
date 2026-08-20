@@ -1,0 +1,17 @@
+FROM mcr.microsoft.com/playwright:v1.62.1-noble
+
+WORKDIR /app
+
+COPY --chown=pwuser:pwuser package.json ./
+RUN npm install --omit=dev
+
+COPY --chown=pwuser:pwuser browser-worker.js ./browser-worker.js
+COPY --chown=pwuser:pwuser src/web-review/browser-runner.js ./src/web-review/browser-runner.js
+COPY --chown=pwuser:pwuser src/web-review/url-policy.js ./src/web-review/url-policy.js
+
+USER pwuser
+ENV NODE_ENV=production
+ENV PORT=8890
+EXPOSE 8890
+
+CMD ["node", "browser-worker.js"]
