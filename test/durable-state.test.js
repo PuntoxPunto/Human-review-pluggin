@@ -31,27 +31,13 @@ function capture() {
     document: { scrollWidth: 1280, scrollHeight: 1400, clientWidth: 1280, clientHeight: 800 },
     screenshotBase64: Buffer.from("durable-png").toString("base64"),
     structure: [{
-      tag: "button",
-      selector: "button.cta",
-      path: "main > button",
-      parentPath: "main",
-      role: "button",
-      name: "Continue",
-      text: "Continue",
+      tag: "button", selector: "button.cta", path: "main > button", parentPath: "main", role: "button", name: "Continue", text: "Continue",
       rect: { x: 100, y: 100, width: 120, height: 40, top: 100, right: 220, bottom: 140, left: 100 },
-      position: "static",
-      zIndex: "auto",
-      overflowX: "visible",
-      overflowY: "visible",
+      position: "static", zIndex: "auto", overflowX: "visible", overflowY: "visible",
     }],
-    consoleErrors: [],
-    networkErrors: [],
+    consoleErrors: [], networkErrors: [],
   };
 }
-
-test("canonical review state survives store reconstruction", () => {
-  withDurableState(arguments[0]);
-});
 
 test("Human/Web Review, evidence, findings, baselines and fix decisions survive restart", (t) => {
   withDurableState(t);
@@ -84,17 +70,7 @@ test("Human/Web Review, evidence, findings, baselines and fix decisions survive 
   const storedFindings = findingsA.replaceForEvidence({
     reviewId: web.id,
     evidenceId: evidence.id,
-    findings: [{
-      type: "element_horizontal_clipping",
-      severity: "error",
-      confidence: 0.99,
-      title: "CTA clipped",
-      description: "Measured clipping.",
-      target,
-      related: null,
-      rect: target.rect,
-      metrics: { overflow_px: 12 },
-    }],
+    findings: [{ type: "element_horizontal_clipping", severity: "error", confidence: 0.99, title: "CTA clipped", description: "Measured clipping.", target, related: null, rect: target.rect, metrics: { overflow_px: 12 } }],
   });
   const accepted = findingsA.decide(evidence.id, storedFindings[0].id, { status: "accepted", comment: "Fix before release." });
 
@@ -110,26 +86,13 @@ test("Human/Web Review, evidence, findings, baselines and fix decisions survive 
   });
 
   const plan = fixesA.create({ reviewId: web.id, evidenceId: evidence.id, items: [{
-    findingId: accepted.id,
-    fingerprint: accepted.fingerprint,
-    source: accepted.source,
-    type: accepted.type,
-    title: accepted.title,
-    description: accepted.description,
-    target: accepted.target,
-    related: null,
-    comments: accepted.comments,
-    comparisonId: comparison.id,
-    referenceEvidenceId: evidence.id,
-    verificationPolicy: "human_recheck",
+    findingId: accepted.id, fingerprint: accepted.fingerprint, source: accepted.source, type: accepted.type,
+    title: accepted.title, description: accepted.description, target: accepted.target, related: null, comments: accepted.comments,
+    comparisonId: comparison.id, referenceEvidenceId: evidence.id, verificationPolicy: "human_recheck",
   }] });
   const attempt = fixesA.addAttempt(plan.id, {
-    status: "needs_review",
-    baseEvidenceId: evidence.id,
-    postFixEvidenceId: evidence.id,
-    postFixReviewId: web.id,
-    changeSummary: "Adjusted CTA spacing.",
-    changeReference: "commit:abc123",
+    status: "needs_review", baseEvidenceId: evidence.id, postFixEvidenceId: evidence.id, postFixReviewId: web.id,
+    changeSummary: "Adjusted CTA spacing.", changeReference: "commit:abc123",
     results: [{ finding_id: accepted.id, fingerprint: accepted.fingerprint, source: accepted.source, status: "needs_review", reason: "Needs visual confirmation." }],
     comparison: { metrics: { changed: 1 } },
   });
@@ -159,7 +122,6 @@ test("Human/Web Review, evidence, findings, baselines and fix decisions survive 
   const restoredFinding = findingsB.get(evidence.id, accepted.id);
   assert.equal(restoredFinding.status, "accepted");
   assert.equal(restoredFinding.comments[0].text, "Fix before release.");
-
   assert.equal(referencesB.get(comparison.id).referenceEvidenceId, evidence.id);
 
   const restoredPlan = fixesB.get(plan.id);
