@@ -2,8 +2,8 @@ FROM mcr.microsoft.com/playwright:v1.62.1-noble
 
 WORKDIR /app
 
-COPY --chown=pwuser:pwuser package.json package-lock.json ./
-RUN npm ci --omit=dev
+COPY --chown=pwuser:pwuser package.json ./
+RUN npm install --omit=dev
 
 COPY --chown=pwuser:pwuser browser-worker.js ./browser-worker.js
 COPY --chown=pwuser:pwuser src/web-review/browser-runner.js ./src/web-review/browser-runner.js
