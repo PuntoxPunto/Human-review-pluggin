@@ -222,7 +222,12 @@ async function performScrollCheckpoint(page, checkpoint) {
       const scrollHeight = Math.max(root.scrollHeight, body?.scrollHeight || 0);
       const maxY = Math.max(0, scrollHeight - innerHeight);
       const targetY = Math.round(maxY * progress);
-      window.scrollTo(0, targetY);
+      const previousValue = root.style.getPropertyValue("scroll-behavior");
+      const previousPriority = root.style.getPropertyPriority("scroll-behavior");
+      root.style.setProperty("scroll-behavior", "auto", "important");
+      window.scrollTo({ left: 0, top: targetY, behavior: "instant" });
+      if (previousValue) root.style.setProperty("scroll-behavior", previousValue, previousPriority);
+      else root.style.removeProperty("scroll-behavior");
       return { requestedProgress: progress, targetY, maxY };
     }, checkpoint.progress);
     return { ...result, kind: "progress", resolvedLocator: null, measurement: null };
@@ -238,7 +243,13 @@ async function performScrollCheckpoint(page, checkpoint) {
         let target = scrollY + rect.top;
         if (requestedAlign === "center") target -= (innerHeight - rect.height) / 2;
         if (requestedAlign === "end") target -= innerHeight - rect.height;
-        window.scrollTo(0, Math.max(0, target));
+        const root = document.documentElement;
+        const previousValue = root.style.getPropertyValue("scroll-behavior");
+        const previousPriority = root.style.getPropertyPriority("scroll-behavior");
+        root.style.setProperty("scroll-behavior", "auto", "important");
+        window.scrollTo({ left: 0, top: Math.max(0, target), behavior: "instant" });
+        if (previousValue) root.style.setProperty("scroll-behavior", previousValue, previousPriority);
+        else root.style.removeProperty("scroll-behavior");
       }, align);
     }
     return {
