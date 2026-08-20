@@ -5,6 +5,7 @@ const state = {
   evidence: null,
   findings: [],
   activeFindingId: null,
+  savingDecision: false,
 };
 
 let rpcId = 0;
@@ -40,7 +41,7 @@ window.addEventListener("message", (event) => {
 const bridgeReady = (async () => {
   try {
     await rpcRequest("ui/initialize", {
-      appInfo: { name: "web-review-widget", version: "0.1.0" },
+      appInfo: { name: "web-review-widget", version: "0.2.0" },
       appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
       protocolVersion: "2026-01-26",
     });
@@ -49,6 +50,11 @@ const bridgeReady = (async () => {
     console.error("Web Review bridge initialization failed", error);
   }
 })();
+
+async function callTool(name, args) {
+  await bridgeReady;
+  return rpcRequest("tools/call", { name, arguments: args });
+}
 
 function hiddenMetaFrom(response) {
   return response?._meta
@@ -65,7 +71,8 @@ function hydrate(response) {
   state.review = webReview.review || null;
   state.evidence = webReview.evidence;
   state.findings = Array.isArray(webReview.findings) ? webReview.findings : [];
-  state.activeFindingId = null;
+  state.activeFindingId = state.findings[0]?.id || null;
+  state.savingDecision = false;
   render();
 }
 
@@ -76,13 +83,20 @@ function hydrateFromOpenAI() {
 }
 
 function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[char]));
+  return String(value ?? "").replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[char]));
 }
 
 function findingCounts() {
-  const counts = { total: state.findings.length, info: 0, warning: 0, error: 0, critical: 0 };
-  for (const finding of state.findings) if (Object.hasOwn(counts, finding.severity)) counts[finding.severity] += 1;
+  const counts = { total: state.findings.length, info: 0, warning: 0, error: 0, critical: 0, new: 0, accepted: 0, rejected: 0 };
+  for (const finding of state.findings) {
+    if (Object.hasOwn(counts, finding.severity)) counts[finding.severity] += 1;
+    if (Object.hasOwn(counts, finding.status)) counts[finding.status] += 1;
+  }
   return counts;
+}
+
+function activeFinding() {
+  return state.findings.find((finding) => finding.id === state.activeFindingId) || null;
 }
 
 function render() {
@@ -91,27 +105,32 @@ function render() {
   $("title").textContent = state.review?.title || evidence.title || "Web Review";
   $("meta").textContent = `${evidence.finalUrl} · ${evidence.viewport.width}×${evidence.viewport.height} · evidence ${evidence.id}`;
   $("shot").src = `data:${evidence.screenshotMimeType || "image/png"};base64,${evidence.screenshotBase64}`;
+  $("sendDecisions").disabled = false;
   const counts = findingCounts();
   $("counts").innerHTML = [
     `<span class="pill">${counts.total} total</span>`,
     counts.error ? `<span class="pill">${counts.error} error</span>` : "",
     counts.warning ? `<span class="pill">${counts.warning} warning</span>` : "",
-    counts.info ? `<span class="pill">${counts.info} info</span>` : "",
+    counts.accepted ? `<span class="pill">${counts.accepted} accepted</span>` : "",
+    counts.rejected ? `<span class="pill">${counts.rejected} rejected</span>` : "",
+    counts.new ? `<span class="pill">${counts.new} undecided</span>` : "",
   ].join("");
   $("findings").innerHTML = state.findings.length ? state.findings.map((finding) => `
-    <button class="finding ${finding.id === state.activeFindingId ? "active" : ""}" data-finding-id="${escapeHtml(finding.id)}" type="button">
-      <strong>${escapeHtml(finding.title)}</strong>
+    <button class="finding ${finding.status || "new"} ${finding.id === state.activeFindingId ? "active" : ""}" data-finding-id="${escapeHtml(finding.id)}" type="button">
+      <strong>${escapeHtml(finding.title)} <span class="status">${escapeHtml(finding.status || "new")}</span></strong>
       <p>${escapeHtml(finding.description)}</p>
-      <div class="severity">${escapeHtml(finding.severity)} · ${Math.round((finding.confidence || 0) * 100)}% confidence</div>
+      <div class="severity">${escapeHtml(finding.severity)} · ${Math.round((finding.confidence || 0) * 100)}% confidence${finding.comments?.length ? ` · ${finding.comments.length} comment${finding.comments.length === 1 ? "" : "s"}` : ""}</div>
     </button>
   `).join("") : '<div class="empty">No deterministic geometry findings in this capture.</div>';
   document.querySelectorAll("[data-finding-id]").forEach((button) => {
     button.addEventListener("click", () => {
       state.activeFindingId = button.dataset.findingId;
       renderFindingsOnly();
+      renderDecisionPanel();
       renderOverlay();
     });
   });
+  renderDecisionPanel();
   renderOverlay();
 }
 
@@ -119,6 +138,64 @@ function renderFindingsOnly() {
   document.querySelectorAll("[data-finding-id]").forEach((button) => {
     button.classList.toggle("active", button.dataset.findingId === state.activeFindingId);
   });
+}
+
+function renderDecisionPanel() {
+  const finding = activeFinding();
+  const panel = $("decisionPanel");
+  if (!finding) {
+    panel.innerHTML = state.findings.length ? '<div class="empty">Select a finding to review it.</div>' : "";
+    return;
+  }
+  const comments = Array.isArray(finding.comments) ? finding.comments : [];
+  const target = finding.target?.path || finding.target?.selector || "Page-level finding";
+  panel.innerHTML = `
+    <div class="decision">
+      <h2>${escapeHtml(finding.title)} · ${escapeHtml(finding.status || "new")}</h2>
+      <div class="target">${escapeHtml(target)}</div>
+      ${comments.length ? `<div class="comments">${comments.map((comment) => `<div class="comment">${escapeHtml(comment.text)}</div>`).join("")}</div>` : ""}
+      <textarea id="decisionComment" placeholder="Optional instruction or context for ChatGPT"></textarea>
+      <div class="decision-actions">
+        <button data-decision="accepted" type="button" ${state.savingDecision ? "disabled" : ""}>Accept</button>
+        <button data-decision="rejected" type="button" ${state.savingDecision ? "disabled" : ""}>Reject</button>
+        <button data-decision="new" type="button" ${state.savingDecision ? "disabled" : ""}>Reset</button>
+        <button id="addComment" type="button" ${state.savingDecision ? "disabled" : ""}>Add comment</button>
+      </div>
+    </div>`;
+  panel.querySelectorAll("[data-decision]").forEach((button) => {
+    button.addEventListener("click", () => saveDecision(button.dataset.decision));
+  });
+  $("addComment")?.addEventListener("click", () => saveDecision(finding.status || "new", { requireComment: true }));
+}
+
+async function saveDecision(status, { requireComment = false } = {}) {
+  const finding = activeFinding();
+  if (!finding || !state.evidence || state.savingDecision) return;
+  const comment = $("decisionComment")?.value.trim() || "";
+  if (requireComment && !comment) {
+    $("decisionComment")?.focus();
+    return;
+  }
+  state.savingDecision = true;
+  renderDecisionPanel();
+  try {
+    const result = await callTool("set_web_finding_decision", {
+      evidence_id: state.evidence.id,
+      finding_id: finding.id,
+      status,
+      ...(comment ? { comment } : {}),
+    });
+    const structured = result?.structuredContent || result;
+    const updated = structured?.finding;
+    if (updated?.id) {
+      state.findings = state.findings.map((item) => item.id === updated.id ? updated : item);
+    }
+  } catch (error) {
+    console.error("Could not save Web Review decision", error);
+  } finally {
+    state.savingDecision = false;
+    render();
+  }
 }
 
 function renderOverlay() {
@@ -133,7 +210,7 @@ function renderOverlay() {
   const scaleY = image.clientHeight / evidence.viewport.height;
   const findings = state.activeFindingId
     ? state.findings.filter((finding) => finding.id === state.activeFindingId)
-    : state.findings.filter((finding) => ["error", "warning"].includes(finding.severity));
+    : state.findings.filter((finding) => ["error", "warning"].includes(finding.severity) && finding.status !== "rejected");
   overlay.innerHTML = findings.filter((finding) => finding.rect).map((finding) => {
     const rect = finding.rect;
     const left = Math.max(0, rect.left) * scaleX;
@@ -146,8 +223,29 @@ function renderOverlay() {
   }).join("");
 }
 
+async function sendDecisions() {
+  if (!state.evidence) return;
+  const button = $("sendDecisions");
+  button.disabled = true;
+  button.textContent = "Sending…";
+  const prompt = `Read Web Review findings for evidence ${state.evidence.id}. Act only on accepted findings and explicit human comments. Do not apply rejected findings. Preserve the browser evidence as the verification baseline.`;
+  try {
+    if (window.openai?.sendFollowUpMessage) {
+      await window.openai.sendFollowUpMessage({ prompt, scrollToBottom: true });
+    } else {
+      await rpcRequest("ui/message", { role: "user", content: [{ type: "text", text: prompt }] });
+    }
+  } catch (error) {
+    console.warn("Web Review decisions were saved, but automatic follow-up was unavailable.", error);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Send decisions";
+  }
+}
+
 $("shot").addEventListener("load", renderOverlay);
 window.addEventListener("resize", renderOverlay, { passive: true });
+$("sendDecisions").addEventListener("click", () => sendDecisions());
 $("fullscreen").addEventListener("click", async () => {
   try {
     await bridgeReady;

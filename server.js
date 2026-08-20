@@ -23,6 +23,7 @@ const SERVER_INSTRUCTIONS = [
   "When the user asks to visually review HTML, call create_review with the complete HTML, then open_review.",
   "When the user asks to review a public live or staging URL, call create_web_review, then capture_web_review, then open_web_review. Use get_web_evidence for DOM details and analyze_web_geometry to rerun deterministic geometry checks.",
   "Treat deterministic overflow and clipping findings as browser evidence; treat candidate_overlap as a heuristic that still needs human or visual verification.",
+  "When the Web Review cockpit sends decisions, call get_web_findings. Act only on accepted findings and explicit human comments; do not apply rejected findings. Preserve the referenced evidence as the verification baseline.",
   "When Human Review sends a feedback batch, call get_review_feedback and treat user_edited_html as the source of truth.",
   "Preserve direct human edits exactly unless an explicit user comment asks to change them.",
   "Call apply_review, resolve any direct-edit conflict, then call open_review again.",
@@ -267,7 +268,7 @@ function registerTools(server) {
 
 function createMcpServer() {
   const server = new McpServer(
-    { name: "human-review-chatgpt", version: "0.4.0" },
+    { name: "human-review-chatgpt", version: "0.5.0" },
     { instructions: SERVER_INSTRUCTIONS },
   );
 
@@ -326,7 +327,7 @@ const httpServer = createHttpServer(async (req, res) => {
     return res.end(JSON.stringify({
       ok: true,
       name: "human-review-chatgpt",
-      version: "0.4.0",
+      version: "0.5.0",
       mcp: MCP_PATH,
       storage: STORE_MODE,
       web_review: {
@@ -335,6 +336,7 @@ const httpServer = createHttpServer(async (req, res) => {
         target_policy: "public-http-only",
         cockpit: true,
         geometry_findings: true,
+        human_decisions: true,
       },
       warning: STORE_MODE === "memory-ephemeral" ? "Review sessions reset when the server process restarts." : undefined,
     }));
