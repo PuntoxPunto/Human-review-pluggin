@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { RemoteBrowserRunner } from "../src/web-review/remote-browser-runner.js";
 import { BrowserRunner as ConfiguredBrowserRunner } from "../src/web-review/browser-runner-entry.js";
+import { resolve as resolveRunnerImport } from "../src/web-review/runner-loader.mjs";
 
 const WORKER_PORT = 8896;
 const TOKEN = "test-browser-worker-token-12345";
@@ -30,6 +31,15 @@ async function waitForWorker() {
   }
   throw new Error("Browser worker did not become healthy in time.");
 }
+
+test("production loader swaps only server.js runner import", async () => {
+  const mapped = await resolveRunnerImport("./src/web-review/browser-runner.js", { parentURL: "file:///app/server.js" }, async () => ({ url: "wrong" }));
+  assert.match(mapped.url, /browser-runner-entry\.js$/);
+  assert.equal(mapped.shortCircuit, true);
+
+  const untouched = await resolveRunnerImport("./browser-runner.js", { parentURL: "file:///app/src/web-review/browser-runner-entry.js" }, async (specifier) => ({ url: `next:${specifier}` }));
+  assert.equal(untouched.url, "next:./browser-runner.js");
+});
 
 test("isolated browser worker requires auth and returns real Chromium evidence", { timeout: 30_000 }, async (t) => {
   const fixture = await startFixture();
