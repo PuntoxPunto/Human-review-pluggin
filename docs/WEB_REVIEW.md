@@ -1,4 +1,4 @@
-# Web Review — M1 through M6
+# Web Review — M1 through M7
 
 Web Review extends Human Review with live-browser QA for public staging URLs using reproducible Playwright evidence. Human Review remains the source of truth for direct human HTML edits.
 
@@ -8,7 +8,7 @@ Web Review extends Human Review with live-browser QA for public staging URLs usi
 
 - `create_web_review`, `capture_web_review`, `get_web_evidence`
 - real Playwright Chromium capture
-- screenshot, DOM paths, geometry, viewport/scroll, document dimensions, console/network errors
+- screenshots, DOM paths, geometry, viewport/scroll, document dimensions, console/network errors
 - explicit `review -> run -> evidence` lineage
 - SSRF-oriented public target and subrequest policy
 
@@ -34,18 +34,14 @@ Web Review extends Human Review with live-browser QA for public staging URLs usi
 - exact role+name, exact text, or CSS locators
 - exact-one-match invariant: ambiguity fails instead of guessing
 - immutable before/after evidence in the same Chromium session
-- real Chromium tests prove DOM mutation and ambiguous-locator rejection
 
 ### M6 — deterministic scroll and framing evidence
 
 - `run_web_scroll_checkpoints`, `get_web_scroll_run`
-- 1–20 checkpoints captured in one Chromium session
-- `progress`: sample an exact fraction of document scroll range
-- `element`: align one exact element to viewport `start`, `center`, or `end`
-- `measure`: measure one exact element without changing scroll
-- every checkpoint creates immutable screenshot + DOM/geometry evidence and deterministic findings
-- element checkpoints store the exact resolved locator
-- `center_offset_px` measures framing relative to viewport center
+- `progress`, `element`, and `measure` checkpoints
+- exact `start`, `center`, and `end` element alignment
+- `center_offset_px` turns framing into measurable evidence
+- checkpoint positioning remains deterministic even when the page uses `scroll-behavior:smooth`
 
 `center_offset_px` semantics:
 
@@ -55,11 +51,20 @@ Web Review extends Human Review with live-browser QA for public staging URLs usi
 < 0    element center is above viewport center
 ```
 
-This turns a navigation problem such as “the CTA reached the section, but the user still has to scroll before the animation is properly framed” into measurable browser evidence instead of subjective inspection.
+### M7 — deterministic multi-step scenarios
+
+- `run_web_scenario`, `get_web_scenario_run`
+- 1–20 action/scroll steps run in one Chromium session
+- initial immutable evidence is captured before the first step
+- every successful step produces its own screenshot + DOM/geometry evidence and findings
+- browser state persists across `fill`, `click`, scroll and measurement steps
+- a failing step stops the scenario rather than guessing or silently recovering
+- the failure-state viewport is captured when possible
+- completed steps and evidence remain auditable after a later step fails
+- scenario lineage is stored separately from raw evidence
 
 Still deferred:
 
-- combined multi-action scenarios;
 - semantic LLM locator recovery and reusable action recipes;
 - visual LLM critic;
 - reference comparison;
@@ -80,18 +85,20 @@ ChatGPT
         +-- FindingStore
         +-- ActionRunStore
         +-- ScrollRunStore
+        +-- ScenarioRunStore
         +-- Web Review MCP Apps cockpit
 ```
 
 ## Evidence invariant
 
-Raw browser evidence is immutable. Findings, decisions, action metadata, and scroll-run metadata reference evidence IDs.
+Raw browser evidence is immutable. Findings, decisions and execution metadata reference evidence IDs.
 
 ```text
 webrev_*
-  +-- run_*       -> ev_*
-  +-- actrun_*    -> before ev_* / after ev_*
-  +-- scrollrun_* -> checkpoint ev_* -> checkpoint ev_* -> ...
+  +-- run_*        -> ev_*
+  +-- actrun_*     -> before ev_* / after ev_*
+  +-- scrollrun_*  -> checkpoint ev_* -> checkpoint ev_* -> ...
+  +-- scenario_*   -> initial ev_* -> step ev_* -> step ev_* -> ...
 ```
 
 A successful browser command is never equivalent to a verified result. The evidence after the command/checkpoint is the verification state.
@@ -106,17 +113,39 @@ exact visible text
 CSS selector
 ```
 
-Every locator must match exactly one element. Zero or multiple matches fail explicitly; later semantic recovery may repair that failure but cannot silently override it.
+Every locator must match exactly one element. Zero or multiple matches fail explicitly. M7 does not contain semantic fallback.
+
+## Scenario contract
+
+A scenario is composed only from primitives already verified in M5/M6:
+
+```text
+initial evidence
+   ↓
+action or scroll step
+   ↓
+evidence + findings
+   ↓
+next step in same browser session
+```
+
+A failed step produces:
+
+```text
+scenario.status = failed
+failed step index
+error message
+all prior completed step evidence
+failure-state evidence when the page is still capturable
+```
+
+This makes a failure diagnosable instead of reducing it to a Playwright exception.
 
 ## Scroll checkpoint contract
 
-`progress` uses the browser's actual scrollable range (`document height - viewport height`).
+`progress` uses the actual scrollable range. `element` computes an explicit target and remeasures after scrolling. `measure` observes framing without changing scroll.
 
-`element` computes an explicit scroll target from the element rectangle and requested alignment, then remeasures the element after scrolling.
-
-`measure` is useful after a click/navigation or another checkpoint when we want to verify framing without changing browser state.
-
-The run preserves checkpoint order and each evidence ID so motion-heavy pages can later be replayed as a sequence rather than judged from one static screenshot.
+For deterministic observation, checkpoint positioning temporarily overrides page smooth-scroll behavior only while setting the requested viewport position, then restores the page style. Visual animations are not globally disabled.
 
 ## Geometry and human decision semantics
 
@@ -134,7 +163,7 @@ Rejected findings must not become implementation tasks.
 
 Production targets are restricted to public HTTP(S); private/reserved destinations and blocked subrequests are rejected. Browser execution should ultimately live in an isolated worker/container with egress controls, quotas, deadlines, and per-user authorization.
 
-No arbitrary JavaScript evaluation tool is exposed to the model. Internal browser code uses fixed evaluation routines only for measurement and deterministic scrolling.
+No arbitrary JavaScript evaluation tool is exposed to the model. Internal browser code uses fixed evaluation routines only for deterministic interaction and measurement.
 
 ## Runtime
 
@@ -147,22 +176,23 @@ npm start
 
 ## Acceptance gates
 
-### M1–M5
+### M1–M6
 
-All prior real Chromium, Human Review, MCP, geometry, decision and deterministic-action gates remain mandatory.
+All prior Chromium, Human Review, MCP, geometry, decision, action, smooth-scroll and framing gates remain mandatory.
 
-### M6
+### M7
 
 CI must additionally prove:
 
-1. `run_web_scroll_checkpoints` and `get_web_scroll_run` are model-visible with correct write/read annotations;
-2. `progress=0` captures the top of the page and `progress=0.5` produces a materially different `scrollY` on a tall fixture;
-3. an exact element requested with `align=center` is measured within a small tolerance of `center_offset_px = 0`;
-4. a following `measure` checkpoint confirms the same framing without moving the page;
-5. every checkpoint contains screenshot + DOM/geometry evidence;
-6. exact locator semantics remain enforced;
-7. all M1–M5 gates remain green.
+1. `run_web_scenario` and `get_web_scenario_run` are model-visible with correct write/read annotations;
+2. a `fill -> click -> element center -> measure` scenario retains browser state across all steps in one real Chromium session;
+3. the click observes the value filled in the previous step, proving the page was not reloaded between steps;
+4. scenario scroll checkpoints retain the M6 centering tolerance;
+5. initial evidence and every completed step contain non-empty screenshots and structured evidence;
+6. an ambiguous locator stops the scenario instead of choosing a candidate;
+7. a failed scenario retains completed steps and captures the failure-state viewport when possible;
+8. all M1–M6 gates remain green.
 
 ## Next slice
 
-M7 should build deterministic multi-step scenarios from the already-verified action and scroll primitives, with explicit evidence gates between meaningful steps. Semantic locator recovery should come after scenarios, so successful recoveries can be persisted as reusable action recipes instead of becoming one-off LLM guesses.
+M8 should introduce semantic locator recovery only as a bounded fallback after deterministic resolution fails. The LLM should propose candidate locators; deterministic Playwright verification must prove exactly-one-match before execution. Successful recoveries can then be persisted as reusable recipes instead of one-off guesses.

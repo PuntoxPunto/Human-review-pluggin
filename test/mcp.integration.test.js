@@ -77,10 +77,12 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
       "get_web_action_run",
       "get_web_evidence",
       "get_web_findings",
+      "get_web_scenario_run",
       "get_web_scroll_run",
       "open_review",
       "open_web_review",
       "run_web_action",
+      "run_web_scenario",
       "run_web_scroll_checkpoints",
       "save_review_draft",
       "set_web_finding_decision",
@@ -99,6 +101,8 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   const actionRunTool = listed.tools.find((tool) => tool.name === "get_web_action_run");
   const scrollTool = listed.tools.find((tool) => tool.name === "run_web_scroll_checkpoints");
   const scrollRunTool = listed.tools.find((tool) => tool.name === "get_web_scroll_run");
+  const scenarioTool = listed.tools.find((tool) => tool.name === "run_web_scenario");
+  const scenarioRunTool = listed.tools.find((tool) => tool.name === "get_web_scenario_run");
   assert.equal(openTool?._meta?.ui?.resourceUri, HUMAN_RESOURCE_URI);
   assert.equal(openTool?._meta?.["openai/outputTemplate"], HUMAN_RESOURCE_URI);
   assert.equal(webOpenTool?._meta?.ui?.resourceUri, WEB_RESOURCE_URI);
@@ -114,6 +118,8 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   assert.deepEqual(actionRunTool?._meta?.ui?.visibility, ["model"]);
   assert.deepEqual(scrollTool?._meta?.ui?.visibility, ["model"]);
   assert.deepEqual(scrollRunTool?._meta?.ui?.visibility, ["model"]);
+  assert.deepEqual(scenarioTool?._meta?.ui?.visibility, ["model"]);
+  assert.deepEqual(scenarioRunTool?._meta?.ui?.visibility, ["model"]);
   assert.equal(captureTool?.annotations?.openWorldHint, true);
   assert.equal(captureTool?.annotations?.readOnlyHint, false);
   assert.equal(actionTool?.annotations?.openWorldHint, true);
@@ -121,6 +127,9 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   assert.equal(scrollTool?.annotations?.openWorldHint, true);
   assert.equal(scrollTool?.annotations?.readOnlyHint, false);
   assert.equal(scrollRunTool?.annotations?.readOnlyHint, true);
+  assert.equal(scenarioTool?.annotations?.openWorldHint, true);
+  assert.equal(scenarioTool?.annotations?.readOnlyHint, false);
+  assert.equal(scenarioRunTool?.annotations?.readOnlyHint, true);
 
   const resources = await client.listResources();
   assert.ok(resources.resources.some((resource) => resource.uri === HUMAN_RESOURCE_URI));
