@@ -4,11 +4,15 @@ import { isPrivateAddress, assertSafeHttpUrl } from "../src/web-review/url-polic
 import { WebReviewStore } from "../src/web-review/store.js";
 import { EvidenceStore } from "../src/web-review/evidence-store.js";
 
-test("private network addresses are rejected", async () => {
+test("private and reserved network addresses are rejected", async () => {
   assert.equal(isPrivateAddress("127.0.0.1"), true);
   assert.equal(isPrivateAddress("10.1.2.3"), true);
+  assert.equal(isPrivateAddress("100.64.1.2"), true);
   assert.equal(isPrivateAddress("192.168.1.20"), true);
+  assert.equal(isPrivateAddress("198.18.0.1"), true);
   assert.equal(isPrivateAddress("::1"), true);
+  assert.equal(isPrivateAddress("ff02::1"), true);
+  assert.equal(isPrivateAddress("2001:db8::1"), true);
   await assert.rejects(() => assertSafeHttpUrl("http://127.0.0.1:8080/"), /Private or local/);
   await assert.rejects(() => assertSafeHttpUrl("file:///etc/passwd"), /only supports/);
   await assert.rejects(() => assertSafeHttpUrl("https://user:pass@example.com/"), /credentials/);
