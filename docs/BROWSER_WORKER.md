@@ -1,6 +1,6 @@
 # Web Review Browser Worker
 
-M13 separates Chromium execution from the ChatGPT MCP process. M15 adds bounded operational observability and request quotas without expanding the browser API.
+M13 separates Chromium execution from the ChatGPT MCP process. M15 adds bounded observability/quotas. M16 adds a hard execution boundary: every accepted browser job runs in its own child process/process group so an overlong Playwright/Chromium tree can be killed independently of the HTTP worker.
 
 ## Runtime split
 
@@ -9,9 +9,11 @@ ChatGPT
   ↓
 Human/Web Review MCP
   ↓ HTTPS + Bearer token + x-request-id
-Browser Worker
+Browser Worker (HTTP / auth / quota / metrics)
+  ↓ child process per accepted job
+Browser Job
   ↓
-Playwright / Chromium
+Playwright / Chromium process tree
   ↓
 public staging URL
 ```
@@ -39,7 +41,7 @@ WEB_REVIEW_BROWSER_REQUEST_TIMEOUT_MS=75000
 
 The remote client creates an `x-request-id` for every worker call. The worker echoes it in the response; worker failures/timeouts include that ID in the MCP-side error so an operator can correlate one review action with worker logs.
 
-`npm run start:mcp-local` bypasses the loader and keeps the original local Chromium behavior for development/debugging.
+`npm run start:mcp-local` bypasses the loader and keeps local Chromium behavior for development/debugging.
 
 ## Worker configuration
 
@@ -57,42 +59,46 @@ BROWSER_WORKER_MAX_CONCURRENCY=2
 BROWSER_WORKER_MAX_REQUESTS_PER_MINUTE=60
 BROWSER_WORKER_MAX_BODY_BYTES=524288
 BROWSER_WORKER_MAX_OPERATION_TIMEOUT_MS=45000
+BROWSER_WORKER_HARD_JOB_TIMEOUT_MS=60000
+BROWSER_WORKER_MAX_JOB_OUTPUT_BYTES=25165824
 ```
 
-The current worker uses one configured bearer token, so the requests-per-minute quota applies to that authenticated principal. A future multi-principal auth layer can maintain the same contract while tracking independent buckets.
+`MAX_OPERATION_TIMEOUT_MS` bounds Playwright's normal cooperative timeout. `HARD_JOB_TIMEOUT_MS` is independent and kills the entire browser job process group if the operation fails to return. Production should normally keep the hard deadline somewhat above the internal Playwright timeout.
+
+The output cap protects the worker from an unexpectedly large child response, including unusually large screenshot/evidence payloads.
+
+The current worker uses one configured bearer token, so the requests-per-minute quota applies to that authenticated principal. A future multi-principal auth layer can preserve the same contract with independent buckets.
 
 `BROWSER_WORKER_ALLOW_PRIVATE=true` is test-only. Production defaults to public HTTP(S) targets and retains DNS/IP SSRF checks for every browser subrequest.
 
+## Per-job process isolation
+
+The HTTP worker no longer launches Chromium directly. For every accepted job it spawns `browser-job.js` as a dedicated child process.
+
+On Linux/production the child is placed in its own process group. If the hard deadline or output limit is exceeded, Web Review sends `SIGKILL` to that group, terminating the Node job process and Chromium descendants together. On platforms without POSIX process groups, the child process itself is killed.
+
+The browser child receives a strict environment allowlist needed for Node/Playwright, locale, certificates, temp/cache paths and optional proxy configuration. Worker/MCP credentials such as `BROWSER_WORKER_TOKEN`, `WEB_REVIEW_BROWSER_RUNNER_TOKEN`, OpenAI API keys, and unrelated deployment secrets are not forwarded.
+
+`browser-job.js` accepts one JSON request over stdin and returns one JSON result over stdout. It does not expose an HTTP listener or a separate public API.
+
 ## Request IDs and logs
 
-The worker accepts an incoming `x-request-id` containing only bounded safe characters or generates `browserreq_*` itself. Structured logs are JSON records with fields such as:
+The worker accepts a bounded safe `x-request-id` or generates `browserreq_*`. Structured logs contain only operational fields such as request ID, fixed operation name, outcome, duration and active job count.
 
-```text
-{
-  "timestamp": "...",
-  "service": "web-review-browser-worker",
-  "event": "job_started|job_finished|request_rejected",
-  "request_id": "browserreq_...",
-  "operation": "capture",
-  "duration_ms": 1234
-}
-```
-
-Logs intentionally do **not** include target URLs, DOM text, screenshot content, bearer tokens, fill values, comments, or page data.
+Logs intentionally do **not** include target URLs, DOM text, screenshot content, bearer tokens, fill values, comments or page data.
 
 ## Metrics
 
-`GET /metrics` requires the same bearer token as browser execution. It returns Prometheus-compatible counters/gauges for:
+`GET /metrics` requires bearer authentication and returns Prometheus-compatible counters/gauges for:
 
 - jobs started / succeeded / failed;
+- hard job timeouts;
 - rejected auth / rate / concurrency requests;
 - active jobs;
 - cumulative job duration;
-- operation counts by the fixed operation name.
+- operation counts by fixed operation name.
 
 Metrics contain no URLs, selectors, page text or user content.
-
-Example:
 
 ```text
 curl -H "Authorization: Bearer $BROWSER_WORKER_TOKEN" \
@@ -101,43 +107,36 @@ curl -H "Authorization: Bearer $BROWSER_WORKER_TOKEN" \
 
 ## Docker
 
-Build:
-
 ```text
 docker build -f Dockerfile.browser-worker -t web-review-browser-worker .
-```
 
-Run behind an HTTPS reverse proxy:
-
-```text
 docker run --rm \
   -e BROWSER_WORKER_TOKEN='<secret>' \
   -e BROWSER_WORKER_MAX_CONCURRENCY=2 \
   -e BROWSER_WORKER_MAX_REQUESTS_PER_MINUTE=60 \
+  -e BROWSER_WORKER_HARD_JOB_TIMEOUT_MS=60000 \
   -p 8890:8890 \
   web-review-browser-worker
 ```
 
-The image uses the matching Playwright Chromium runtime and runs as the non-root `pwuser`.
+The image uses the matching Playwright Chromium runtime and runs as non-root `pwuser`. The worker, job child and Playwright browser therefore remain inside the same container security boundary while jobs receive independent process-group lifetimes.
 
 ## Security boundary
 
-The worker is not a general browser automation API. It intentionally keeps:
+The worker intentionally keeps:
 
 - bearer-token authentication;
-- HTTPS required for the MCP→worker link in production;
+- HTTPS for MCP→worker in production;
 - fixed operation allowlist;
-- bounded request body;
-- bounded operation timeout forwarded to Playwright;
-- requests-per-minute quota with HTTP 429;
-- bounded concurrency with HTTP 429 when saturated;
-- public-target SSRF policy and blocked unsafe subrequests;
+- bounded request body and child output;
+- cooperative Playwright timeout plus process-group hard deadline;
+- requests-per-minute and concurrency 429 gates;
+- public-target SSRF policy and unsafe-subrequest blocking;
 - authenticated metrics;
-- no browser credentials/cookies supplied by the MCP;
+- a minimal browser-child environment without worker/API secrets;
+- no browser credentials/cookies supplied by MCP;
 - no arbitrary `evaluate()` or script execution endpoint.
-
-The token should be stored as a deployment secret and never placed in source, MCP structured content, screenshots, review evidence, logs or metrics.
 
 ## Remaining production hardening
 
-The isolation/observability boundary still does not provide a durable queue or a process-level hard kill for a Chromium job that outlives all internal Playwright timeouts. Remaining work includes process/container execution deadlines, richer readiness checks, artifact retention/garbage collection, schema migrations and a distributed storage adapter for horizontally scaled deployments.
+The runtime can now forcibly reclaim a wedged browser job, but it still lacks a durable queue and distributed orchestration. Remaining work includes readiness/draining behavior, artifact retention/garbage collection, schema migrations, multi-principal auth/quotas, and a distributed storage adapter for horizontal deployment.
