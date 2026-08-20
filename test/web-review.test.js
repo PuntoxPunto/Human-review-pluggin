@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { isPrivateAddress, assertSafeHttpUrl } from "../src/web-review/url-policy.js";
 import { WebReviewStore } from "../src/web-review/store.js";
 import { EvidenceStore } from "../src/web-review/evidence-store.js";
+import { FindingStore } from "../src/web-review/finding-store.js";
 
 test("private and reserved network addresses are rejected", async () => {
   assert.equal(isPrivateAddress("127.0.0.1"), true);
@@ -60,4 +61,30 @@ test("failed browser runs remain auditable", () => {
   assert.equal(failed.status, "error");
   assert.equal(failed.runs[0].status, "failed");
   assert.match(failed.runs[0].error, /navigation failed/);
+});
+
+test("human finding decisions and comments survive deterministic reanalysis", () => {
+  const store = new FindingStore();
+  const base = {
+    type: "element_horizontal_clipping",
+    severity: "error",
+    confidence: 0.99,
+    title: "Element extends outside viewport",
+    description: "CTA is clipped by 32px.",
+    target: { selector: "button.cta", path: "body > main > button", tag: "button", name: "Continue", rect: { x: 980, y: 100, width: 52, height: 40, top: 100, right: 1032, bottom: 140, left: 980 } },
+    related: null,
+    rect: { x: 980, y: 100, width: 52, height: 40, top: 100, right: 1032, bottom: 140, left: 980 },
+    metrics: { overflow_px: 32 },
+  };
+
+  const first = store.replaceForEvidence({ reviewId: "webrev_1", evidenceId: "ev_1", findings: [base] });
+  const decided = store.decide("ev_1", first[0].id, { status: "accepted", comment: "Fix this CTA before release." });
+  assert.equal(decided.status, "accepted");
+  assert.equal(decided.comments.length, 1);
+
+  const rerun = store.replaceForEvidence({ reviewId: "webrev_1", evidenceId: "ev_1", findings: [{ ...base, description: "CTA remains clipped." }] });
+  assert.equal(rerun[0].id, first[0].id);
+  assert.equal(rerun[0].status, "accepted");
+  assert.equal(rerun[0].comments[0].text, "Fix this CTA before release.");
+  assert.equal(store.summary("ev_1").accepted, 1);
 });
