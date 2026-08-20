@@ -142,5 +142,6 @@ test("deterministic and visual critic finding partitions do not overwrite each o
     rejected: 0,
     deterministic: 1,
     visual_critic: 1,
+    reference_critic: 0,
   });
 });
