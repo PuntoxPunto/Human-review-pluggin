@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:Canvas; color:CanvasText; }
+    .app { min-height:560px; display:grid; grid-template-rows:auto 1fr; }
+    header { display:flex; gap:8px; align-items:center; padding:10px 12px; border-bottom:1px solid color-mix(in srgb, CanvasText 16%, transparent); }
+    .title { flex:1; min-width:0; }
+    h1 { margin:0; font-size:14px; }
+    .meta { margin-top:3px; font-size:11px; opacity:.68; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    button { border:1px solid color-mix(in srgb, CanvasText 20%, transparent); background:color-mix(in srgb, CanvasText 5%, Canvas); color:inherit; border-radius:8px; padding:7px 10px; cursor:pointer; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    .primary { background:color-mix(in srgb, #2563eb 18%, Canvas); }
+    main { min-height:0; display:grid; grid-template-columns:minmax(0,1fr) 340px; }
+    .stage { overflow:auto; padding:12px; min-width:0; }
+    .compare { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .frame { min-width:0; border:1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius:10px; overflow:hidden; background:color-mix(in srgb, CanvasText 3%, Canvas); }
+    .frame-head { padding:7px 9px; font-size:11px; font-weight:700; border-bottom:1px solid color-mix(in srgb, CanvasText 12%, transparent); }
+    .frame img { display:block; width:100%; height:auto; background:#fff; }
+    .summary { margin-top:10px; padding:9px; border:1px solid color-mix(in srgb, CanvasText 12%, transparent); border-radius:10px; font-size:11px; line-height:1.45; }
+    aside { min-height:0; overflow:auto; border-left:1px solid color-mix(in srgb, CanvasText 16%, transparent); }
+    .rail-head { position:sticky; top:0; z-index:2; padding:11px; background:Canvas; border-bottom:1px solid color-mix(in srgb, CanvasText 12%, transparent); }
+    .counts { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
+    .pill, .badge { display:inline-block; border-radius:999px; padding:2px 6px; background:color-mix(in srgb, CanvasText 8%, Canvas); font-size:10px; }
+    #items { display:grid; gap:7px; padding:8px; }
+    .item { width:100%; text-align:left; padding:9px; }
+    .item.active { outline:2px solid currentColor; }
+    .item.resolved { border-color:color-mix(in srgb, #16a34a 55%, transparent); }
+    .item.unresolved { border-color:color-mix(in srgb, #dc2626 55%, transparent); }
+    .item.needs_review { border-style:dashed; }
+    .item strong { display:block; font-size:12px; }
+    .item p { font-size:11px; opacity:.72; margin:5px 0 0; line-height:1.35; }
+    .item .small { margin-top:6px; font-size:10px; opacity:.7; }
+    .panel { margin:0 8px 10px; padding:10px; border:1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius:10px; }
+    .panel h2 { margin:0 0 5px; font-size:12px; }
+    .panel p { font-size:11px; line-height:1.4; opacity:.75; }
+    textarea { width:100%; min-height:70px; resize:vertical; border:1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius:8px; padding:8px; background:Canvas; color:CanvasText; font:inherit; font-size:12px; }
+    .actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:7px; }
+    .actions button { font-size:11px; padding:6px 8px; }
+    .empty { padding:18px 10px; text-align:center; opacity:.6; font-size:12px; }
+    @media (max-width:820px) { main { grid-template-columns:1fr; grid-template-rows:auto 330px; } aside { border-left:0; border-top:1px solid color-mix(in srgb, CanvasText 16%, transparent); } .compare { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="title"><h1 id="title">Fix Review</h1><div class="meta" id="meta">Waiting for a fix attempt…</div></div>
+      <button id="sendDecisions" class="primary" type="button" disabled>Send decisions</button>
+      <button id="fullscreen" type="button">Fullscreen</button>
+    </header>
+    <main>
+      <section class="stage">
+        <div class="compare">
+          <div class="frame"><div class="frame-head">Before</div><img id="beforeShot" alt="Original evidence before the fix attempt" /></div>
+          <div class="frame"><div class="frame-head">After</div><img id="afterShot" alt="Post-fix evidence" /></div>
+        </div>
+        <div class="summary" id="summary"></div>
+      </section>
+      <aside>
+        <div class="rail-head"><strong>Fix items</strong><div class="counts" id="counts"></div></div>
+        <div id="items"><div class="empty">No fix attempt loaded.</div></div>
+        <div id="decisionPanel"></div>
+      </aside>
+    </main>
+  </div>
+  <script>/*__FIX_REVIEW_WIDGET_SCRIPT__*/</script>
+</body>
+</html>
