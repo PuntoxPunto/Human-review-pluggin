@@ -4,11 +4,19 @@ import { fileURLToPath } from "node:url";
 const JOB_PATH = fileURLToPath(new URL("../../browser-job.js", import.meta.url));
 const DEFAULT_HARD_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 24 * 1024 * 1024;
+const SAFE_ENV_KEYS = [
+  "PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TZ",
+  "LD_LIBRARY_PATH", "NODE_PATH", "XDG_CACHE_HOME", "PLAYWRIGHT_BROWSERS_PATH",
+  "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+  "http_proxy", "https_proxy", "no_proxy", "NODE_ENV",
+  "BROWSER_JOB_TEST_DELAY_MS", "BROWSER_JOB_MAX_INPUT_BYTES",
+];
 
-function childEnvironment({ allowPrivate = false } = {}) {
-  const env = { ...process.env };
-  delete env.BROWSER_WORKER_TOKEN;
-  delete env.WEB_REVIEW_BROWSER_RUNNER_TOKEN;
+export function createBrowserJobEnvironment({ allowPrivate = false, baseEnv = process.env } = {}) {
+  const env = {};
+  for (const key of SAFE_ENV_KEYS) {
+    if (baseEnv[key] !== undefined) env[key] = String(baseEnv[key]);
+  }
   env.BROWSER_JOB_ALLOW_PRIVATE = allowPrivate ? "true" : "false";
   return env;
 }
@@ -19,7 +27,7 @@ export function runBrowserJobProcess({ operation, payload, allowPrivate = false,
 
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [JOB_PATH], {
-      env: childEnvironment({ allowPrivate }),
+      env: createBrowserJobEnvironment({ allowPrivate }),
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = Buffer.alloc(0);
