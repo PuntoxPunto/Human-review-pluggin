@@ -21,14 +21,27 @@ export function createBrowserJobEnvironment({ allowPrivate = false, baseEnv = pr
   return env;
 }
 
+function killBrowserJobTree(child) {
+  if (!child?.pid) return;
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+      return;
+    } catch {}
+  }
+  try { child.kill("SIGKILL"); } catch {}
+}
+
 export function runBrowserJobProcess({ operation, payload, allowPrivate = false, hardTimeoutMs = DEFAULT_HARD_TIMEOUT_MS, maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES } = {}) {
   const boundedTimeout = Math.max(1_000, Math.min(180_000, Number(hardTimeoutMs) || DEFAULT_HARD_TIMEOUT_MS));
   const boundedOutput = Math.max(1_048_576, Math.min(64 * 1024 * 1024, Number(maxOutputBytes) || DEFAULT_MAX_OUTPUT_BYTES));
+  const detached = process.platform !== "win32";
 
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [JOB_PATH], {
       env: createBrowserJobEnvironment({ allowPrivate }),
       stdio: ["pipe", "pipe", "pipe"],
+      detached,
     });
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
@@ -44,14 +57,14 @@ export function runBrowserJobProcess({ operation, payload, allowPrivate = false,
 
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      killBrowserJobTree(child);
     }, boundedTimeout);
 
     child.stdout.on("data", (chunk) => {
       if (outputExceeded) return;
       if (stdout.length + chunk.length > boundedOutput) {
         outputExceeded = true;
-        child.kill("SIGKILL");
+        killBrowserJobTree(child);
         return;
       }
       stdout = Buffer.concat([stdout, chunk]);
@@ -90,7 +103,7 @@ export function runBrowserJobProcess({ operation, payload, allowPrivate = false,
       child.stdin.end(JSON.stringify({ operation, payload }));
     } catch (error) {
       clearTimeout(timer);
-      child.kill("SIGKILL");
+      killBrowserJobTree(child);
       finishReject(Object.assign(new Error(`Could not send browser job payload: ${error.message}`), { statusCode: 500, code: "BROWSER_JOB_INPUT_ERROR" }));
     }
   });
