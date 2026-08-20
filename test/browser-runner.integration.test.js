@@ -28,7 +28,7 @@ async function startFixtureServer() {
   };
 }
 
-test("BrowserRunner captures screenshot, visible DOM geometry, and viewport in real Chromium", { timeout: 30_000 }, async (t) => {
+test("BrowserRunner captures screenshot, DOM paths, document geometry, and viewport in real Chromium", { timeout: 30_000 }, async (t) => {
   const fixture = await startFixtureServer();
   t.after(() => new Promise((resolve) => fixture.server.close(resolve)));
 
@@ -41,14 +41,19 @@ test("BrowserRunner captures screenshot, visible DOM geometry, and viewport in r
   assert.equal(capture.title, "Web Review Fixture");
   assert.deepEqual(capture.viewport, { width: 900, height: 700 });
   assert.deepEqual(capture.scroll, { x: 0, y: 0 });
+  assert.ok(capture.document.scrollWidth >= 900);
+  assert.ok(capture.document.scrollHeight >= 700);
   assert.ok(capture.screenshotBase64.length > 100);
 
   const heading = capture.structure.find((element) => element.tag === "h1" && element.text === "Evidence works");
   assert.ok(heading, "expected the visible h1 in the structure snapshot");
   assert.ok(heading.rect.width > 0);
   assert.ok(heading.rect.height > 0);
+  assert.match(heading.path, /h1#headline$/);
+  assert.match(heading.parentPath, /main$/);
 
   const button = capture.structure.find((element) => element.tag === "button");
   assert.equal(button?.name, "Primary action");
+  assert.match(button?.path || "", /button$/);
   assert.equal(capture.consoleErrors.length, 0);
 });
