@@ -6,13 +6,15 @@ import { FixPlanStore } from "./fix-plan-store.js";
 
 const NOAUTH = [{ type: "noauth" }];
 const fixPlanStore = new FixPlanStore();
+const AUTO_RECHECK_TYPES = new Set(["horizontal_overflow", "element_horizontal_clipping"]);
 
 function sourceOf(finding) {
   return finding.source || "deterministic";
 }
 
-function snapshotFinding(finding) {
+export function snapshotFixFinding(finding) {
   const source = sourceOf(finding);
+  const deterministicRecheck = source === "deterministic" && AUTO_RECHECK_TYPES.has(finding.type);
   return {
     findingId: finding.id,
     fingerprint: finding.fingerprint,
@@ -26,8 +28,21 @@ function snapshotFinding(finding) {
     comments: finding.comments || [],
     comparisonId: finding.comparisonId || null,
     referenceEvidenceId: finding.referenceEvidenceId || null,
-    verificationPolicy: source === "deterministic" ? "deterministic_recheck" : "human_recheck",
+    verificationPolicy: deterministicRecheck ? "deterministic_recheck" : "human_recheck",
   };
+}
+
+export function selectAcceptedFindings(allFindings, findingIds = null, evidenceId = "evidence") {
+  if (findingIds?.length) {
+    const unique = [...new Set(findingIds)];
+    return unique.map((id) => {
+      const finding = allFindings.find((item) => item.id === id);
+      if (!finding) throw new Error(`Finding ${id} was not found for evidence ${evidenceId}.`);
+      if (finding.status !== "accepted") throw new Error(`Finding ${id} is ${finding.status}; only accepted findings may enter a fix plan.`);
+      return finding;
+    });
+  }
+  return allFindings.filter((finding) => finding.status === "accepted");
 }
 
 function targetStillExists(evidence, target) {
@@ -37,14 +52,16 @@ function targetStillExists(evidence, target) {
   return evidence.structure.some((element) => element.path === identity || element.selector === identity);
 }
 
-function evaluateItem(item, postEvidence, postDeterministic) {
+export function evaluateFixPlanItem(item, postEvidence, postDeterministic) {
   if (item.verificationPolicy !== "deterministic_recheck") {
     return {
       finding_id: item.findingId,
       fingerprint: item.fingerprint,
       source: item.source,
       status: "needs_review",
-      reason: "Perceptual or baseline findings require fresh multimodal/human review on post-fix evidence.",
+      reason: item.source === "deterministic"
+        ? "This accepted finding is heuristic or otherwise not eligible for automatic deterministic closure; fresh review is required."
+        : "Perceptual or baseline findings require fresh multimodal/human review on post-fix evidence.",
     };
   }
 
@@ -55,7 +72,7 @@ function evaluateItem(item, postEvidence, postDeterministic) {
       fingerprint: item.fingerprint,
       source: item.source,
       status: "unresolved",
-      reason: "The same deterministic finding fingerprint is still present in post-fix evidence.",
+      reason: "The same high-confidence deterministic finding fingerprint is still present in post-fix evidence.",
     };
   }
 
@@ -74,11 +91,11 @@ function evaluateItem(item, postEvidence, postDeterministic) {
     fingerprint: item.fingerprint,
     source: item.source,
     status: "resolved",
-    reason: "The original target still exists and the accepted deterministic finding no longer reproduces.",
+    reason: "The original target still exists and the accepted high-confidence deterministic finding no longer reproduces.",
   };
 }
 
-function overallStatus(results) {
+export function overallFixStatus(results) {
   if (results.some((result) => result.status === "unresolved")) return "unresolved";
   if (results.some((result) => result.status === "needs_review")) return "needs_review";
   return "verified";
@@ -112,23 +129,12 @@ export function registerWebFixTools(server, { reviewStore, evidenceStore, findin
     const evidence = evidenceStore.get(evidence_id);
     reviewStore.get(evidence.reviewId);
     const allFindings = findingStore.list(evidence_id);
-    let selected;
-    if (finding_ids?.length) {
-      const unique = [...new Set(finding_ids)];
-      selected = unique.map((id) => {
-        const finding = allFindings.find((item) => item.id === id);
-        if (!finding) throw new Error(`Finding ${id} was not found for evidence ${evidence_id}.`);
-        if (finding.status !== "accepted") throw new Error(`Finding ${id} is ${finding.status}; only accepted findings may enter a fix plan.`);
-        return finding;
-      });
-    } else {
-      selected = allFindings.filter((finding) => finding.status === "accepted");
-    }
+    const selected = selectAcceptedFindings(allFindings, finding_ids, evidence_id);
     if (!selected.length) throw new Error(`Evidence ${evidence_id} has no accepted findings to plan.`);
     const plan = fixPlanStore.create({
       reviewId: evidence.reviewId,
       evidenceId: evidence_id,
-      items: selected.map(snapshotFinding),
+      items: selected.map(snapshotFixFinding),
     });
     return {
       structuredContent: {
@@ -161,7 +167,7 @@ export function registerWebFixTools(server, { reviewStore, evidenceStore, findin
 
   registerAppTool(server, "record_web_fix_attempt", {
     title: "Verify a Web Review fix attempt",
-    description: "Record an externally authorized code/deploy attempt by comparing the plan's original evidence with fresh post-fix evidence. Re-runs deterministic geometry and auto-resolves only findings that can be proven absent while their original target still exists. Visual/baseline findings remain needs_review. This tool never edits code or deploys.",
+    description: "Record an externally authorized code/deploy attempt by comparing the plan's original evidence with fresh post-fix evidence. Re-runs deterministic geometry and auto-resolves only high-confidence overflow/clipping findings that can be proven absent while their original target still exists. Heuristic, visual, and baseline findings remain needs_review. This tool never edits code or deploys.",
     inputSchema: {
       fix_plan_id: z.string().min(1),
       post_fix_evidence_id: z.string().min(1),
@@ -203,8 +209,8 @@ export function registerWebFixTools(server, { reviewStore, evidenceStore, findin
       findings: analyzeGeometry(postEvidence),
       source: "deterministic",
     });
-    const results = plan.items.map((item) => evaluateItem(item, postEvidence, postDeterministic));
-    const status = overallStatus(results);
+    const results = plan.items.map((item) => evaluateFixPlanItem(item, postEvidence, postDeterministic));
+    const status = overallFixStatus(results);
     const resolvedCount = results.filter((item) => item.status === "resolved").length;
     const unresolvedCount = results.filter((item) => item.status === "unresolved").length;
     const needsReviewCount = results.filter((item) => item.status === "needs_review").length;
