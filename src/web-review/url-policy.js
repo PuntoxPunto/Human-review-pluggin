@@ -4,24 +4,30 @@ import net from "node:net";
 function isPrivateIpv4(address) {
   const parts = address.split(".").map(Number);
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-  const [a, b] = parts;
-  return a === 10
+  const [a, b, c] = parts;
+  return a === 0
+    || a === 10
     || a === 127
+    || (a === 100 && b >= 64 && b <= 127)
     || (a === 169 && b === 254)
     || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 0 && c === 0)
+    || (a === 192 && b === 0 && c === 2)
     || (a === 192 && b === 168)
-    || a === 0
+    || (a === 198 && (b === 18 || b === 19))
+    || (a === 198 && b === 51 && c === 100)
+    || (a === 203 && b === 0 && c === 113)
     || a >= 224;
 }
 
 function isPrivateIpv6(address) {
   const value = address.toLowerCase().split("%")[0];
   if (value === "::" || value === "::1") return true;
-  if (value.startsWith("fc") || value.startsWith("fd") || value.startsWith("fe8") || value.startsWith("fe9") || value.startsWith("fea") || value.startsWith("feb")) return true;
-  if (value.startsWith("::ffff:")) {
-    const mapped = value.slice("::ffff:".length);
-    return net.isIP(mapped) === 4 ? isPrivateIpv4(mapped) : false;
-  }
+  if (value.startsWith("::ffff:")) return true;
+  if (value.startsWith("fc") || value.startsWith("fd")) return true;
+  if (value.startsWith("fe8") || value.startsWith("fe9") || value.startsWith("fea") || value.startsWith("feb")) return true;
+  if (value.startsWith("ff")) return true;
+  if (value.startsWith("2001:db8:")) return true;
   return false;
 }
 
