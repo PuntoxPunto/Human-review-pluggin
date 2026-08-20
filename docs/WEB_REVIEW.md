@@ -1,4 +1,4 @@
-# Web Review — M1 through M8
+# Web Review — M1 through M9
 
 Web Review extends Human Review with live-browser QA for public staging URLs using reproducible Playwright evidence. Human Review remains the source of truth for direct human HTML edits.
 
@@ -6,167 +6,171 @@ Web Review extends Human Review with live-browser QA for public staging URLs usi
 
 ### M1/M2 — live browser and evidence
 
-- `create_web_review`, `capture_web_review`, `get_web_evidence`
-- real Playwright Chromium capture
-- screenshots, DOM paths, geometry, viewport/scroll, document dimensions, console/network errors
+- real Playwright Chromium capture with screenshot, DOM paths, geometry, viewport/scroll, document dimensions and browser diagnostics
 - explicit `review -> run -> evidence` lineage
-- SSRF-oriented public target and subrequest policy
+- public HTTP(S)/SSRF boundary
 
-### M3 — geometry findings and cockpit
+### M3/M4 — geometry, cockpit and human decisions
 
-- deterministic `horizontal_overflow` and `element_horizontal_clipping`
-- heuristic non-blocking `candidate_overlap`
-- `analyze_web_geometry`, immutable evidence-scoped findings, `open_web_review`
-- MCP Apps screenshot/finding cockpit
+- deterministic overflow/clipping and heuristic overlap findings
+- evidence-scoped FindingStore and Web Review MCP Apps cockpit
+- stable finding fingerprints, `new|accepted|rejected`, persistent comments
+- human decisions survive analyzer refreshes
 
-### M4 — human QA decisions
+### M5/M6 — bounded actions and scroll/framing
 
-- stable finding fingerprints based on type + DOM target identity
-- `new`, `accepted`, `rejected` decisions and persistent comments
-- analyzer refresh preserves human decisions/comments
-- private `set_web_finding_decision`, model-visible `get_web_findings`
-- cockpit v2 Accept / Reject / Reset / Add comment / Send decisions
-
-### M5 — deterministic browser actions
-
-- `run_web_action`, `get_web_action_run`
-- bounded `click`, `fill`, `scroll_into_view`
-- exact role+name, exact text, or CSS locators
-- exact-one-match invariant: ambiguity fails instead of guessing
-- immutable before/after evidence in the same Chromium session
-
-### M6 — deterministic scroll and framing evidence
-
-- `run_web_scroll_checkpoints`, `get_web_scroll_run`
-- `progress`, `element`, and `measure` checkpoints
-- exact `start`, `center`, and `end` element alignment
-- `center_offset_px` turns framing into measurable evidence
+- exact-one-match `click`, `fill`, `scroll_into_view`
+- before/after evidence
+- progress/element/measure scroll checkpoints
+- measurable `center_offset_px`
 - deterministic checkpoint positioning even with page smooth-scroll CSS
 
-### M7 — deterministic multi-step scenarios
+### M7 — multi-step scenarios
 
-- `run_web_scenario`, `get_web_scenario_run`
-- 1–20 action/scroll steps in one Chromium session
-- initial evidence plus evidence after every completed step
-- state persists across fill/click/scroll/measure
-- ambiguous locator stops the scenario and preserves prior/failure evidence
+- 1–20 bounded action/scroll steps in one Chromium session
+- initial and per-step evidence
+- state persists across steps
+- ambiguous locator stops the scenario while retaining prior and failure-state evidence
 
 ### M8 — bounded semantic locator recovery
 
-- `get_web_locator_recovery_context`
-- `verify_web_locator_recovery`
-- `get_web_locator_recipes`
-- recovery context ranks a compact shortlist from immutable visible evidence
-- ChatGPT is the semantic reasoning layer; the plugin does not call a second LLM/API
-- candidates expose role/name, text, and CSS-path locator options
-- PT-BR/Spanish accented hints are normalized for ranking
-- a proposed candidate is never trusted until Chromium proves exactly one match
-- verification uses only the bounded `scroll_into_view` primitive: it does not click or fill
-- verification produces fresh evidence whether the candidate succeeds or remains ambiguous
-- only successful exact-one-match verification may create/update a reusable recipe
-- recipe identity includes review, URL, failed locator and target intent
-- repeated verification updates the same recipe and increments its verification count
+- compact recovery context from immutable visible evidence
+- ChatGPT proposes; Chromium verifies exact-one-match
+- non-mutating verification with `scroll_into_view`
+- only verified candidates may create reusable recipes
+- recipe verification count and intent-aware identity
+
+### M9 — human-gated multimodal visual critic
+
+- `get_web_visual_critic_context` returns the immutable screenshot plus compact visible-element anchors
+- ChatGPT itself performs the multimodal judgment; the plugin does not make a second model/API call
+- `submit_web_visual_findings` stores structured perceptual proposals tied to the selected evidence
+- visual proposals may be page-level or anchored to an exact evidence path/selector
+- optional target/related anchors must resolve exactly one evidence element
+- visual finding severity is restricted to `info|warning|error`; visual proposals cannot self-declare `critical`
+- visual confidence is capped at `0.90`
+- FindingStore is partitioned by provenance: `deterministic` and `visual_critic`
+- refreshing one source never deletes the other source
+- fingerprints include source so deterministic and perceptual findings cannot collide
+- human Accept/Reject/comments survive re-submission within each source
+- submitting visual findings ensures a deterministic geometry partition exists for the evidence
+- cockpit v3 shows source badges and uses solid overlays for deterministic findings, dashed overlays for visual-critic findings
+- the cockpit explicitly labels visual findings as lower-trust until a human accepts them
 
 Still deferred:
 
-- automatic replay/recovery inside a failed multi-step scenario;
-- visual LLM critic;
-- reference comparison;
+- automatic recovery/replay inside a failed stateful scenario;
+- reference/baseline comparison;
 - autonomous fix/deploy/retest.
 
 ## Architecture
 
 ```text
-ChatGPT semantic reasoning
+ChatGPT semantic + multimodal reasoning
   |
   +-- deterministic Human/Web Review tools
-        +-- BrowserRunner -> Playwright / Chromium
-        +-- EvidenceStore
-        +-- Geometry Analyzer / FindingStore
-        +-- ActionRunStore / ScrollRunStore / ScenarioRunStore
-        +-- RecoveryRecipeStore
-        +-- Web Review MCP Apps cockpit
+  |     +-- BrowserRunner -> Playwright / Chromium
+  |     +-- EvidenceStore
+  |     +-- Geometry Analyzer
+  |     +-- actions / scroll / scenarios
+  |     +-- recovery verification / recipes
+  |
+  +-- visual critic protocol
+        +-- immutable screenshot context
+        +-- structured visual proposals
+        +-- FindingStore source partition
+        +-- human accept / reject / comments
+        +-- Web Review cockpit v3
 ```
 
-## Evidence invariant
+## Evidence and trust invariant
 
-Raw browser evidence is immutable. Findings, human decisions, execution metadata and recovery recipes reference evidence IDs.
+Raw browser evidence is immutable. Every derived layer references an evidence ID.
 
 ```text
-webrev_*
-  +-- run_*        -> ev_*
-  +-- actrun_*     -> before ev_* / after ev_*
-  +-- scrollrun_*  -> checkpoint ev_* -> ...
-  +-- scenario_*   -> initial ev_* -> step ev_* -> ...
-  +-- recipe_*     -> verified locator + verification ev_*
+browser measurement / evidence
+        > accepted human interpretation
+        > unaccepted visual-critic proposal
+        > model assumption
 ```
 
-A successful browser command or model suggestion is never equivalent to a verified result.
+Human decisions control whether a derived finding becomes an implementation task. A rejected finding must never be applied.
+
+## Finding provenance
+
+Every stored finding has a source:
+
+```text
+deterministic
+visual_critic
+```
+
+`replaceForEvidence(... source="deterministic")` replaces only deterministic findings. `source="visual_critic"` replaces only visual proposals. Matching fingerprints preserve IDs, decisions and comments within that source.
+
+This prevents a geometry refresh from erasing multimodal review and prevents a new critic pass from rewriting browser-measured truth.
+
+## Visual critic protocol
+
+```text
+select immutable evidence / checkpoint
+        ↓
+get_web_visual_critic_context
+        ↓
+ChatGPT inspects screenshot + anchors
+        ↓
+submit_web_visual_findings
+        ↓
+visual_critic findings in cockpit
+        ↓
+human Accept / Reject / Comment
+        ↓
+accepted findings may become implementation work
+```
+
+The critic should identify perceptual problems geometry alone cannot prove: weak hierarchy, inconsistent spacing rhythm, poor composition, typography imbalance, low perceived contrast, awkward animation state, confusing affordance, visually undesirable overlap, or reference mismatch.
+
+It should not duplicate deterministic overflow/clipping merely because those issues are already visible in the screenshot.
 
 ## Locator and recovery contract
 
-Normal execution accepts only role+accessible-name, exact visible text, or CSS selector and requires exactly one match.
-
-Recovery is deliberately separated:
-
-```text
-deterministic locator fails
-        ↓
-select immutable evidence
-        ↓
-get_web_locator_recovery_context
-        ↓
-ChatGPT reasons over screenshot + compact candidates
-        ↓
-proposed deterministic locator
-        ↓
-verify_web_locator_recovery
-        ↓
-exactly one Chromium match?
-   no ──────── yes
-   ↓            ↓
-refine       optional recipe
-                ↓
-         run bounded action
-```
-
-The recovery context only contains elements visible in the selected evidence snapshot. If the intended target belongs to another scroll state, capture/select the appropriate M6/M7 evidence first. This keeps context compact instead of sending the entire DOM to the model.
-
-A verified recipe is an evidence-backed hint, not a permanent bypass. Re-verify when route, page state, markup or UI version may have changed.
+Normal browser execution still requires exact role+name, exact visible text, or CSS with exactly one match. Semantic recovery can propose a candidate but cannot execute it until deterministic Chromium verification succeeds.
 
 ## Scroll/framing semantics
 
-`center_offset_px = 0` means exact vertical center; positive means too low and negative means too high. Checkpoint positioning temporarily overrides smooth-scroll only while selecting the observation state, then restores page behavior. Visual animations remain enabled.
+`center_offset_px = 0` means exact vertical center; positive means too low and negative means too high. Positioning checkpoints temporarily neutralize smooth-scroll only to choose the observation state; visual animations remain enabled.
 
-## Geometry and human decisions
+## Cockpit v3
 
-`horizontal_overflow` and `element_horizontal_clipping` are high-confidence browser evidence. `candidate_overlap` remains heuristic until human/visual confirmation.
+The cockpit displays deterministic and visual findings together but keeps their provenance visible:
 
 ```text
-Human accepted/rejected decision
-  > deterministic analyzer refresh
-  > model assumption
+solid overlay   deterministic
+ dashed overlay  visual critic
 ```
+
+Both sources use the same human decision workflow. The UI handoff instructs ChatGPT to act only on accepted findings and to treat deterministic measurements as stronger evidence than unaccepted critic proposals.
 
 ## Security boundary
 
-Production targets are restricted to public HTTP(S); private/reserved destinations and blocked subrequests are rejected. No arbitrary JavaScript evaluation tool is exposed to the model. Browser execution should ultimately live in an isolated worker/container with explicit egress controls, quotas and authorization.
+Production targets remain restricted to public HTTP(S); private/reserved destinations and blocked subrequests are rejected. No arbitrary JavaScript evaluation tool is exposed to the model. Browser execution should ultimately run in an isolated worker/container with egress controls, quotas and authorization.
 
 ## Acceptance gates
 
-M1–M7 gates remain mandatory.
+All M1–M8 gates remain mandatory.
 
-M8 additionally requires CI to prove:
+M9 additionally requires CI to prove:
 
-1. recovery context, verification and recipe tools are discoverable with correct read/write/open-world annotations;
-2. semantic ranking prefers the intended interactive element from compact evidence;
-3. accented PT-BR hints normalize correctly;
-4. a unique candidate can be verified in real Chromium with `scroll_into_view` without triggering click/fill side effects;
-5. an ambiguous candidate still fails the exact-one-match gate;
-6. repeated verification preserves recipe identity and increments verification count;
-7. changing recovery intent creates a distinct recipe;
-8. all M1–M7 tests and the AppDeploy transport probe remain green.
+1. `get_web_visual_critic_context` is model-visible, read-only and closed-world;
+2. `submit_web_visual_findings` is model-visible, state-writing, closed-world and idempotent;
+3. the Web Review resource is independently versioned to cockpit v3;
+4. deterministic and visual partitions coexist without overwriting one another;
+5. deterministic refresh preserves visual findings and their human decisions/comments;
+6. visual re-submission preserves matching visual finding decisions/comments and leaves deterministic findings untouched;
+7. source-aware summary counts remain correct;
+8. visual schema excludes `critical` severity and caps confidence at 0.90;
+9. cockpit v3 renders deterministic/visual provenance and source-aware handoff language;
+10. all prior Human Review, Chromium, recovery and AppDeploy gates remain green.
 
 ## Next slice
 
-M9 should add a visual critic over selected immutable evidence and scroll/scenario checkpoints. The critic should produce proposed visual findings with lower trust than deterministic geometry, then feed those proposals through the existing human accept/reject workflow before any fix loop.
+M10 should add reference/baseline comparison: associate evidence with a reference screenshot or prior accepted evidence, compare the same viewport/checkpoint states, and let the multimodal critic propose evidence-backed differences without turning raw pixel difference into automatic design truth.
