@@ -6,7 +6,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 
 const PORT = 8799;
 const MCP_URL = new URL(`http://127.0.0.1:${PORT}/mcp`);
-const RESOURCE_URI = "ui://widget/human-review/v2.html";
+const HUMAN_RESOURCE_URI = "ui://widget/human-review/v2.html";
+const WEB_RESOURCE_URI = "ui://widget/web-review/v1.html";
 
 function startServer() {
   const child = spawn(process.execPath, ["server.js"], {
@@ -42,22 +43,25 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
   });
   await ready;
 
-  const client = new Client({ name: "human-review-integration-test", version: "0.3.0" });
+  const client = new Client({ name: "human-review-integration-test", version: "0.4.0" });
   const transport = new StreamableHTTPClientTransport(MCP_URL);
   await client.connect(transport);
   t.after(async () => {
     await client.close().catch(() => {});
   });
 
-  assert.equal(client.getServerVersion()?.version, "0.3.0");
+  assert.equal(client.getServerVersion()?.version, "0.4.0");
   assert.match(client.getInstructions() ?? "", /create_review/);
   assert.match(client.getInstructions() ?? "", /create_web_review/);
+  assert.match(client.getInstructions() ?? "", /open_web_review/);
+  assert.match(client.getInstructions() ?? "", /candidate_overlap/);
   assert.match(client.getInstructions() ?? "", /user_edited_html/);
 
   const listed = await client.listTools();
   assert.deepEqual(
     listed.tools.map((tool) => tool.name).sort(),
     [
+      "analyze_web_geometry",
       "apply_review",
       "capture_web_review",
       "create_review",
@@ -65,28 +69,40 @@ test("MCP review loop and ChatGPT discovery work end to end", { timeout: 30_000 
       "get_review_feedback",
       "get_web_evidence",
       "open_review",
+      "open_web_review",
       "save_review_draft",
       "submit_review",
     ],
   );
 
   const openTool = listed.tools.find((tool) => tool.name === "open_review");
+  const webOpenTool = listed.tools.find((tool) => tool.name === "open_web_review");
   const saveTool = listed.tools.find((tool) => tool.name === "save_review_draft");
   const submitTool = listed.tools.find((tool) => tool.name === "submit_review");
   const captureTool = listed.tools.find((tool) => tool.name === "capture_web_review");
-  assert.equal(openTool?._meta?.ui?.resourceUri, RESOURCE_URI);
-  assert.equal(openTool?._meta?.["openai/outputTemplate"], RESOURCE_URI);
+  assert.equal(openTool?._meta?.ui?.resourceUri, HUMAN_RESOURCE_URI);
+  assert.equal(openTool?._meta?.["openai/outputTemplate"], HUMAN_RESOURCE_URI);
+  assert.equal(webOpenTool?._meta?.ui?.resourceUri, WEB_RESOURCE_URI);
+  assert.equal(webOpenTool?._meta?.["openai/outputTemplate"], WEB_RESOURCE_URI);
   assert.deepEqual(saveTool?._meta?.ui?.visibility, ["app"]);
   assert.deepEqual(submitTool?._meta?.ui?.visibility, ["app"]);
   assert.equal(saveTool?._meta?.["openai/visibility"], "private");
   assert.equal(submitTool?._meta?.["openai/visibility"], "private");
   assert.equal(captureTool?.annotations?.openWorldHint, true);
+  assert.equal(captureTool?.annotations?.readOnlyHint, false);
 
   const resources = await client.listResources();
-  assert.ok(resources.resources.some((resource) => resource.uri === RESOURCE_URI));
-  const resource = await client.readResource({ uri: RESOURCE_URI });
-  assert.equal(resource.contents[0]?.mimeType, "text/html;profile=mcp-app");
-  assert.match(resource.contents[0]?.text ?? "", /Human Review/);
+  assert.ok(resources.resources.some((resource) => resource.uri === HUMAN_RESOURCE_URI));
+  assert.ok(resources.resources.some((resource) => resource.uri === WEB_RESOURCE_URI));
+
+  const humanResource = await client.readResource({ uri: HUMAN_RESOURCE_URI });
+  assert.equal(humanResource.contents[0]?.mimeType, "text/html;profile=mcp-app");
+  assert.match(humanResource.contents[0]?.text ?? "", /Human Review/);
+
+  const webResource = await client.readResource({ uri: WEB_RESOURCE_URI });
+  assert.equal(webResource.contents[0]?.mimeType, "text/html;profile=mcp-app");
+  assert.match(webResource.contents[0]?.text ?? "", /Web Review/);
+  assert.match(webResource.contents[0]?.text ?? "", /Findings/);
 
   const created = await client.callTool({
     name: "create_review",

@@ -19,6 +19,7 @@ export class EvidenceStore {
       title: capture.title,
       viewport: capture.viewport,
       scroll: capture.scroll,
+      document: capture.document,
       screenshotBase64: capture.screenshotBase64,
       screenshotMimeType: "image/png",
       structure: capture.structure,
