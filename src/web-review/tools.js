@@ -20,8 +20,14 @@ const targetSchema = z.object({
   name: z.string().nullable(),
   rect: rectSchema,
 }).nullable();
+const findingCommentSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  createdAt: z.string(),
+});
 const findingSchema = z.object({
   id: z.string(),
+  fingerprint: z.string(),
   type: z.string(),
   severity: z.enum(["info", "warning", "error", "critical"]),
   confidence: z.number(),
@@ -31,7 +37,9 @@ const findingSchema = z.object({
   related: targetSchema,
   rect: rectSchema.nullable(),
   metrics: z.record(z.string(), z.number()),
-  status: z.string(),
+  status: z.enum(["new", "accepted", "rejected"]),
+  comments: z.array(findingCommentSchema),
+  decidedAt: z.string().nullable(),
 });
 
 const evidenceSummarySchema = {
@@ -48,9 +56,19 @@ const evidenceSummarySchema = {
 };
 
 function findingCounts(findings) {
-  const counts = { total: findings.length, info: 0, warning: 0, error: 0, critical: 0 };
+  const counts = {
+    total: findings.length,
+    info: 0,
+    warning: 0,
+    error: 0,
+    critical: 0,
+    new: 0,
+    accepted: 0,
+    rejected: 0,
+  };
   for (const finding of findings) {
     if (Object.hasOwn(counts, finding.severity)) counts[finding.severity] += 1;
+    if (Object.hasOwn(counts, finding.status)) counts[finding.status] += 1;
   }
   return counts;
 }
@@ -150,7 +168,7 @@ export function registerWebReviewTools(server, { store, evidenceStore, findingSt
 
   registerAppTool(server, "analyze_web_geometry", {
     title: "Analyze web geometry",
-    description: "Re-run deterministic overflow, clipping, and candidate-overlap analysis for a previously captured Web Review evidence snapshot.",
+    description: "Re-run deterministic overflow, clipping, and candidate-overlap analysis for a captured Web Review evidence snapshot. Existing human finding decisions on that evidence are preserved.",
     inputSchema: { evidence_id: z.string().min(1) },
     outputSchema: {
       evidence_id: z.string(),
@@ -160,6 +178,9 @@ export function registerWebReviewTools(server, { store, evidenceStore, findingSt
       warning: z.number().int(),
       error: z.number().int(),
       critical: z.number().int(),
+      new: z.number().int(),
+      accepted: z.number().int(),
+      rejected: z.number().int(),
       findings: z.array(findingSchema),
     },
     securitySchemes: NOAUTH,
@@ -175,13 +196,74 @@ export function registerWebReviewTools(server, { store, evidenceStore, findingSt
     const counts = findingCounts(findings);
     return {
       structuredContent: { evidence_id, review_id: evidence.reviewId, ...counts, findings },
-      content: [{ type: "text", text: `Geometry analysis produced ${counts.total} findings: ${counts.error + counts.critical} errors, ${counts.warning} warnings, ${counts.info} informational candidates.` }],
+      content: [{ type: "text", text: `Geometry analysis produced ${counts.total} findings and preserved human decisions: ${counts.accepted} accepted, ${counts.rejected} rejected, ${counts.new} undecided.` }],
+    };
+  });
+
+  registerAppTool(server, "set_web_finding_decision", {
+    title: "Save Web Review finding decision",
+    description: "Internal cockpit action that records a human accept/reject/reset decision and optional comment for one finding.",
+    inputSchema: {
+      evidence_id: z.string().min(1),
+      finding_id: z.string().min(1),
+      status: z.enum(["new", "accepted", "rejected"]),
+      comment: z.string().max(4000).optional(),
+    },
+    outputSchema: {
+      evidence_id: z.string(),
+      finding: findingSchema,
+    },
+    securitySchemes: NOAUTH,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+    _meta: {
+      securitySchemes: NOAUTH,
+      ui: { visibility: ["app"] },
+      "openai/widgetAccessible": true,
+      "openai/visibility": "private",
+    },
+  }, async ({ evidence_id, finding_id, status, comment }) => {
+    const evidence = evidenceStore.get(evidence_id);
+    const finding = findingStore.decide(evidence_id, finding_id, { status, comment });
+    if (finding.reviewId !== evidence.reviewId) throw new Error(`Finding ${finding_id} does not belong to evidence ${evidence_id}.`);
+    return {
+      structuredContent: { evidence_id, finding },
+      content: [{ type: "text", text: `Saved ${status} decision for finding ${finding_id}.` }],
+    };
+  });
+
+  registerAppTool(server, "get_web_findings", {
+    title: "Read Web Review findings",
+    description: "Read findings and human decisions for a Web Review evidence snapshot. Use this after the cockpit asks ChatGPT to act on accepted findings or comments.",
+    inputSchema: { evidence_id: z.string().min(1) },
+    outputSchema: {
+      evidence_id: z.string(),
+      review_id: z.string(),
+      total: z.number().int(),
+      info: z.number().int(),
+      warning: z.number().int(),
+      error: z.number().int(),
+      critical: z.number().int(),
+      new: z.number().int(),
+      accepted: z.number().int(),
+      rejected: z.number().int(),
+      findings: z.array(findingSchema),
+    },
+    securitySchemes: NOAUTH,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+    _meta: { securitySchemes: NOAUTH, ui: { visibility: ["model"] } },
+  }, async ({ evidence_id }) => {
+    const evidence = evidenceStore.get(evidence_id);
+    const findings = findingStore.list(evidence_id);
+    const counts = findingCounts(findings);
+    return {
+      structuredContent: { evidence_id, review_id: evidence.reviewId, ...counts, findings },
+      content: [{ type: "text", text: `Loaded ${counts.total} findings for ${evidence_id}: ${counts.accepted} accepted, ${counts.rejected} rejected, ${counts.new} undecided.` }],
     };
   });
 
   registerAppTool(server, "open_web_review", {
     title: "Open Web Review cockpit",
-    description: "Render the latest or selected Web Review evidence snapshot in the QA cockpit with deterministic findings overlaid on the Playwright screenshot.",
+    description: "Render the latest or selected Web Review evidence snapshot in the QA cockpit with deterministic findings and preserved human decisions overlaid on the Playwright screenshot.",
     inputSchema: {
       review_id: z.string().min(1),
       evidence_id: z.string().min(1).optional(),
@@ -194,6 +276,9 @@ export function registerWebReviewTools(server, { store, evidenceStore, findingSt
       finding_count: z.number().int(),
       error_count: z.number().int(),
       warning_count: z.number().int(),
+      accepted_count: z.number().int(),
+      rejected_count: z.number().int(),
+      undecided_count: z.number().int(),
     },
     securitySchemes: NOAUTH,
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
@@ -228,8 +313,11 @@ export function registerWebReviewTools(server, { store, evidenceStore, findingSt
         finding_count: counts.total,
         error_count: counts.error + counts.critical,
         warning_count: counts.warning,
+        accepted_count: counts.accepted,
+        rejected_count: counts.rejected,
+        undecided_count: counts.new,
       },
-      content: [{ type: "text", text: `Opened ${review.title} evidence ${selectedEvidenceId} with ${counts.total} deterministic findings.` }],
+      content: [{ type: "text", text: `Opened ${review.title} evidence ${selectedEvidenceId}: ${counts.accepted} accepted, ${counts.rejected} rejected, ${counts.new} undecided findings.` }],
       _meta: {
         web_review: {
           review: { id: review.id, title: review.title, targetUrl: review.targetUrl, status: review.status },
