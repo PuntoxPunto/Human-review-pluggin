@@ -329,4 +329,43 @@ export class BrowserRunner {
       return steps;
     });
   }
+
+  async runScenario({ url, viewport = { width: 1440, height: 900 }, steps, timeoutMs = 30_000 }) {
+    if (!Array.isArray(steps) || !steps.length || steps.length > 20) {
+      throw new Error("Scenario requires between 1 and 20 deterministic steps.");
+    }
+    return this.#withPage({ url, viewport, timeoutMs }, async (page, diagnostics) => {
+      const initial = await snapshotPage(page, diagnostics);
+      const completedSteps = [];
+      for (let index = 0; index < steps.length; index += 1) {
+        const step = steps[index];
+        try {
+          let result;
+          if (step.kind === "action") {
+            const resolvedLocator = await performAction(page, step.action, timeoutMs);
+            await settlePage(page, Math.min(3_000, timeoutMs));
+            result = { kind: "action", resolvedLocator, measurement: null };
+          } else if (step.kind === "scroll") {
+            result = await performScrollCheckpoint(page, step.checkpoint);
+            await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+            if (result.resolvedLocator && result.measurement) {
+              const { locator } = await resolveUniqueLocator(page, step.checkpoint.locator);
+              result.measurement = await measureLocator(locator);
+            }
+          } else {
+            throw new Error("Scenario step kind must be action or scroll.");
+          }
+          const capture = await snapshotPage(page, diagnostics);
+          completedSteps.push({ index, step, status: "completed", result, capture, error: null });
+        } catch (error) {
+          await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))).catch(() => {});
+          const capture = await snapshotPage(page, diagnostics).catch(() => null);
+          const message = String(error?.message || error || "Unknown scenario step error").slice(0, 2000);
+          completedSteps.push({ index, step, status: "failed", result: null, capture, error: message });
+          return { status: "failed", error: message, initial, steps: completedSteps };
+        }
+      }
+      return { status: "completed", error: null, initial, steps: completedSteps };
+    });
+  }
 }
