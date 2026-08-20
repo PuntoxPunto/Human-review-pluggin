@@ -1,15 +1,15 @@
 {
   "name": "human-review-chatgpt",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "private": true,
   "type": "module",
-  "description": "Human and live-web visual review inside ChatGPT using Playwright evidence, deterministic QA, bounded semantic recovery, and human-gated multimodal visual critique.",
+  "description": "Human and live-web visual review inside ChatGPT using Playwright evidence, deterministic QA, bounded semantic recovery, visual critique, and baseline comparison.",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check src/store.js && node --check src/sanitize.js && node --check src/web-review/url-policy.js && node --check src/web-review/store.js && node --check src/web-review/evidence-store.js && node --check src/web-review/finding-store.js && node --check src/web-review/action-store.js && node --check src/web-review/scroll-store.js && node --check src/web-review/scenario-store.js && node --check src/web-review/recovery-store.js && node --check src/web-review/recovery.js && node --check src/web-review/recovery-tools.js && node --check src/web-review/visual-critic-tools.js && node --check src/web-review/geometry.js && node --check src/web-review/browser-runner.js && node --check src/web-review/ui.js && node --check src/web-review/tools.js && node --check src/web-review/action-tools.js && node --check src/web-review/scroll-tools.js && node --check public/review-widget.js && node --check public/web-review-widget.js",
+    "check": "node --check server.js && node --check src/store.js && node --check src/sanitize.js && node --check src/web-review/url-policy.js && node --check src/web-review/store.js && node --check src/web-review/evidence-store.js && node --check src/web-review/finding-store.js && node --check src/web-review/action-store.js && node --check src/web-review/scroll-store.js && node --check src/web-review/scenario-store.js && node --check src/web-review/recovery-store.js && node --check src/web-review/recovery.js && node --check src/web-review/recovery-tools.js && node --check src/web-review/visual-critic-tools.js && node --check src/web-review/reference-compare.js && node --check src/web-review/reference-store.js && node --check src/web-review/reference-tools.js && node --check src/web-review/geometry.js && node --check src/web-review/browser-runner.js && node --check src/web-review/ui.js && node --check src/web-review/tools.js && node --check src/web-review/action-tools.js && node --check src/web-review/scroll-tools.js && node --check public/review-widget.js && node --check public/web-review-widget.js",
     "test": "node --test"
   },
   "dependencies": {
