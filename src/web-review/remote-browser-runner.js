@@ -10,8 +10,17 @@ function normalizeBaseUrl(value, { allowInsecure = false } = {}) {
   if (url.protocol !== "https:" && !(allowInsecure && url.protocol === "http:")) {
     throw new Error("Remote browser runner requires HTTPS unless insecure transport is explicitly enabled for tests/dev.");
   }
-  url.pathname = url.pathname.replace(/\/+$/, "");
+  url.pathname = url.pathname.replace(/\/+$/, "") || "/";
   return url;
+}
+
+function operationEndpoint(baseUrl) {
+  const endpoint = new URL(baseUrl.href);
+  const prefix = endpoint.pathname.replace(/\/+$/, "");
+  endpoint.pathname = `${prefix}/v1/browser/run` || "/v1/browser/run";
+  endpoint.search = "";
+  endpoint.hash = "";
+  return endpoint;
 }
 
 export class RemoteBrowserRunner {
@@ -27,7 +36,7 @@ export class RemoteBrowserRunner {
 
   async #call(operation, payload) {
     if (!OPERATIONS.has(operation)) throw new Error(`Unsupported remote browser operation: ${operation}.`);
-    const endpoint = new URL(`${this.baseUrl.pathname}/v1/browser/run`, this.baseUrl);
+    const endpoint = operationEndpoint(this.baseUrl);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error("Remote browser runner request timed out.")), this.requestTimeoutMs);
     try {
