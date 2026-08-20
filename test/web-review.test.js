@@ -87,4 +87,60 @@ test("human finding decisions and comments survive deterministic reanalysis", ()
   assert.equal(rerun[0].status, "accepted");
   assert.equal(rerun[0].comments[0].text, "Fix this CTA before release.");
   assert.equal(store.summary("ev_1").accepted, 1);
+  assert.equal(rerun[0].source, "deterministic");
+});
+
+test("deterministic and visual critic finding partitions do not overwrite each other", () => {
+  const store = new FindingStore();
+  const target = { selector: "section.hero", path: "body > main > section.hero", tag: "section", name: "Hero", rect: { x: 0, y: 0, width: 1000, height: 700, top: 0, right: 1000, bottom: 700, left: 0 } };
+  const deterministic = {
+    type: "element_horizontal_clipping",
+    severity: "error",
+    confidence: 0.99,
+    title: "Element clipped",
+    description: "Measured clipping.",
+    target,
+    related: null,
+    rect: target.rect,
+    metrics: { overflow_px: 20 },
+  };
+  const visual = {
+    source: "visual_critic",
+    type: "visual_hierarchy",
+    severity: "warning",
+    confidence: 0.72,
+    title: "Hero hierarchy feels weak",
+    description: "Primary message does not dominate visually.",
+    target,
+    related: null,
+    rect: target.rect,
+    metrics: {},
+  };
+
+  const deterministicStored = store.replaceForEvidence({ reviewId: "webrev_1", evidenceId: "ev_1", findings: [deterministic] });
+  const visualStored = store.replaceForEvidence({ reviewId: "webrev_1", evidenceId: "ev_1", findings: [visual], source: "visual_critic" });
+  store.decide("ev_1", visualStored[0].id, { status: "accepted", comment: "Increase visual emphasis." });
+
+  const geometryRerun = store.replaceForEvidence({ reviewId: "webrev_1", evidenceId: "ev_1", findings: [{ ...deterministic, description: "Measured again." }] });
+  assert.equal(geometryRerun[0].id, deterministicStored[0].id);
+  assert.equal(store.list("ev_1", { source: "visual_critic" }).length, 1);
+  assert.equal(store.list("ev_1", { source: "visual_critic" })[0].status, "accepted");
+
+  const visualRerun = store.replaceForEvidence({ reviewId: "webrev_1", evidenceId: "ev_1", findings: [{ ...visual, description: "Hierarchy still appears weak." }], source: "visual_critic" });
+  assert.equal(visualRerun[0].id, visualStored[0].id);
+  assert.equal(visualRerun[0].status, "accepted");
+  assert.equal(visualRerun[0].comments[0].text, "Increase visual emphasis.");
+  assert.equal(store.list("ev_1", { source: "deterministic" }).length, 1);
+  assert.deepEqual(store.summary("ev_1"), {
+    total: 2,
+    info: 0,
+    warning: 1,
+    error: 1,
+    critical: 0,
+    new: 1,
+    accepted: 1,
+    rejected: 0,
+    deterministic: 1,
+    visual_critic: 1,
+  });
 });

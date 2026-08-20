@@ -2,6 +2,7 @@ import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import { z } from "zod";
 import { analyzeGeometry } from "./geometry.js";
 import { registerWebRecoveryTools } from "./recovery-tools.js";
+import { registerWebVisualCriticTools } from "./visual-critic-tools.js";
 
 const NOAUTH = [{ type: "noauth" }];
 const viewportSchema = z.object({
@@ -129,4 +130,5 @@ export function registerWebActionTools(server, { reviewStore, evidenceStore, fin
   });
 
   registerWebRecoveryTools(server, { reviewStore, evidenceStore, findingStore, runner });
+  registerWebVisualCriticTools(server, { reviewStore, evidenceStore, findingStore });
 }

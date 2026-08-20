@@ -41,7 +41,7 @@ window.addEventListener("message", (event) => {
 const bridgeReady = (async () => {
   try {
     await rpcRequest("ui/initialize", {
-      appInfo: { name: "web-review-widget", version: "0.2.0" },
+      appInfo: { name: "web-review-widget", version: "0.3.0" },
       appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
       protocolVersion: "2026-01-26",
     });
@@ -86,11 +86,21 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[char]));
 }
 
+function sourceOf(finding) {
+  return finding?.source || "deterministic";
+}
+
+function sourceLabel(finding) {
+  return sourceOf(finding) === "visual_critic" ? "visual critic" : "deterministic";
+}
+
 function findingCounts() {
-  const counts = { total: state.findings.length, info: 0, warning: 0, error: 0, critical: 0, new: 0, accepted: 0, rejected: 0 };
+  const counts = { total: state.findings.length, info: 0, warning: 0, error: 0, critical: 0, new: 0, accepted: 0, rejected: 0, deterministic: 0, visual_critic: 0 };
   for (const finding of state.findings) {
     if (Object.hasOwn(counts, finding.severity)) counts[finding.severity] += 1;
     if (Object.hasOwn(counts, finding.status)) counts[finding.status] += 1;
+    const source = sourceOf(finding);
+    if (Object.hasOwn(counts, source)) counts[source] += 1;
   }
   return counts;
 }
@@ -109,19 +119,23 @@ function render() {
   const counts = findingCounts();
   $("counts").innerHTML = [
     `<span class="pill">${counts.total} total</span>`,
+    counts.deterministic ? `<span class="pill">${counts.deterministic} deterministic</span>` : "",
+    counts.visual_critic ? `<span class="pill">${counts.visual_critic} visual</span>` : "",
     counts.error ? `<span class="pill">${counts.error} error</span>` : "",
     counts.warning ? `<span class="pill">${counts.warning} warning</span>` : "",
     counts.accepted ? `<span class="pill">${counts.accepted} accepted</span>` : "",
     counts.rejected ? `<span class="pill">${counts.rejected} rejected</span>` : "",
     counts.new ? `<span class="pill">${counts.new} undecided</span>` : "",
   ].join("");
-  $("findings").innerHTML = state.findings.length ? state.findings.map((finding) => `
-    <button class="finding ${finding.status || "new"} ${finding.id === state.activeFindingId ? "active" : ""}" data-finding-id="${escapeHtml(finding.id)}" type="button">
-      <strong>${escapeHtml(finding.title)} <span class="status">${escapeHtml(finding.status || "new")}</span></strong>
+  $("findings").innerHTML = state.findings.length ? state.findings.map((finding) => {
+    const source = sourceOf(finding);
+    return `
+    <button class="finding ${source} ${finding.status || "new"} ${finding.id === state.activeFindingId ? "active" : ""}" data-finding-id="${escapeHtml(finding.id)}" type="button">
+      <strong>${escapeHtml(finding.title)} <span class="status">${escapeHtml(finding.status || "new")}</span><span class="source ${source}">${escapeHtml(sourceLabel(finding))}</span></strong>
       <p>${escapeHtml(finding.description)}</p>
       <div class="severity">${escapeHtml(finding.severity)} · ${Math.round((finding.confidence || 0) * 100)}% confidence${finding.comments?.length ? ` · ${finding.comments.length} comment${finding.comments.length === 1 ? "" : "s"}` : ""}</div>
-    </button>
-  `).join("") : '<div class="empty">No deterministic geometry findings in this capture.</div>';
+    </button>`;
+  }).join("") : '<div class="empty">No findings in this capture.</div>';
   document.querySelectorAll("[data-finding-id]").forEach((button) => {
     button.addEventListener("click", () => {
       state.activeFindingId = button.dataset.findingId;
@@ -149,10 +163,12 @@ function renderDecisionPanel() {
   }
   const comments = Array.isArray(finding.comments) ? finding.comments : [];
   const target = finding.target?.path || finding.target?.selector || "Page-level finding";
+  const source = sourceOf(finding);
   panel.innerHTML = `
     <div class="decision">
-      <h2>${escapeHtml(finding.title)} · ${escapeHtml(finding.status || "new")}</h2>
+      <h2>${escapeHtml(finding.title)} · ${escapeHtml(finding.status || "new")} <span class="source ${source}">${escapeHtml(sourceLabel(finding))}</span></h2>
       <div class="target">${escapeHtml(target)}</div>
+      ${source === "visual_critic" ? '<div class="target">Perceptual proposal; lower trust than deterministic browser measurements until accepted by a human.</div>' : ""}
       ${comments.length ? `<div class="comments">${comments.map((comment) => `<div class="comment">${escapeHtml(comment.text)}</div>`).join("")}</div>` : ""}
       <textarea id="decisionComment" placeholder="Optional instruction or context for ChatGPT"></textarea>
       <div class="decision-actions">
@@ -188,7 +204,7 @@ async function saveDecision(status, { requireComment = false } = {}) {
     const structured = result?.structuredContent || result;
     const updated = structured?.finding;
     if (updated?.id) {
-      state.findings = state.findings.map((item) => item.id === updated.id ? updated : item);
+      state.findings = state.findings.map((item) => item.id === updated.id ? { ...item, ...updated, source: item.source || updated.source || "deterministic" } : item);
     }
   } catch (error) {
     console.error("Could not save Web Review decision", error);
@@ -219,7 +235,7 @@ function renderOverlay() {
     const bottom = Math.min(evidence.viewport.height, rect.bottom) * scaleY;
     const width = Math.max(2, right - left);
     const height = Math.max(2, bottom - top);
-    return `<div class="box ${escapeHtml(finding.severity)}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px"></div>`;
+    return `<div class="box ${escapeHtml(finding.severity)} ${escapeHtml(sourceOf(finding))}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px"></div>`;
   }).join("");
 }
 
@@ -228,7 +244,7 @@ async function sendDecisions() {
   const button = $("sendDecisions");
   button.disabled = true;
   button.textContent = "Sending…";
-  const prompt = `Read Web Review findings for evidence ${state.evidence.id}. Act only on accepted findings and explicit human comments. Do not apply rejected findings. Preserve the browser evidence as the verification baseline.`;
+  const prompt = `Read Web Review findings for evidence ${state.evidence.id}. Act only on accepted findings and explicit human comments. Do not apply rejected findings. Preserve the browser evidence as the verification baseline and respect each finding's source: deterministic measurements outrank visual-critic proposals unless the human explicitly accepts the visual finding.`;
   try {
     if (window.openai?.sendFollowUpMessage) {
       await window.openai.sendFollowUpMessage({ prompt, scrollToBottom: true });
