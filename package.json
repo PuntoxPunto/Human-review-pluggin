@@ -1,9 +1,9 @@
 {
   "name": "human-review-chatgpt",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "private": true,
   "type": "module",
-  "description": "Human and live-web visual review inside ChatGPT with isolated Playwright workers, durable evidence metadata, bounded screenshot retention, semantic recovery, visual/baseline critique, and human-gated fix verification/review.",
+  "description": "Human and live-web visual review inside ChatGPT with isolated Playwright workers, versioned durable state, bounded screenshot retention, semantic recovery, visual/baseline critique, and human-gated fix verification/review.",
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "node server-entry.js",
