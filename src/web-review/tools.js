@@ -263,7 +263,7 @@ export function registerWebReviewTools(server, { store, evidenceStore, findingSt
 
   registerAppTool(server, "open_web_review", {
     title: "Open Web Review cockpit",
-    description: "Render the latest or selected Web Review evidence snapshot in the QA cockpit with deterministic findings and preserved human decisions overlaid on the Playwright screenshot.",
+    description: "Render the latest or selected Web Review evidence snapshot in the QA cockpit. If screenshot retention has expired the image, the cockpit remains available in metadata-only mode with DOM/geometry findings and human decisions preserved.",
     inputSchema: {
       review_id: z.string().min(1),
       evidence_id: z.string().min(1).optional(),
@@ -293,7 +293,7 @@ export function registerWebReviewTools(server, { store, evidenceStore, findingSt
     const review = store.get(review_id);
     const selectedEvidenceId = evidence_id || review.evidenceIds.at(-1);
     if (!selectedEvidenceId) throw new Error(`Web Review ${review_id} has no captured evidence yet. Call capture_web_review first.`);
-    const evidence = evidenceStore.get(selectedEvidenceId, { includeScreenshot: true });
+    const evidence = evidenceStore.get(selectedEvidenceId, { includeScreenshot: true, allowMissingScreenshot: true });
     if (evidence.reviewId !== review_id) throw new Error(`Evidence ${selectedEvidenceId} does not belong to Web Review ${review_id}.`);
     let findings = findingStore.list(selectedEvidenceId);
     if (!findings.length) {
@@ -304,6 +304,9 @@ export function registerWebReviewTools(server, { store, evidenceStore, findingSt
       });
     }
     const counts = findingCounts(findings);
+    const screenshotNote = evidence.screenshotAvailable
+      ? ""
+      : " Screenshot retention has expired the image; the cockpit is opening in metadata-only mode. Capture fresh evidence before any visual critique.";
     return {
       structuredContent: {
         review_id,
@@ -317,7 +320,7 @@ export function registerWebReviewTools(server, { store, evidenceStore, findingSt
         rejected_count: counts.rejected,
         undecided_count: counts.new,
       },
-      content: [{ type: "text", text: `Opened ${review.title} evidence ${selectedEvidenceId}: ${counts.accepted} accepted, ${counts.rejected} rejected, ${counts.new} undecided findings.` }],
+      content: [{ type: "text", text: `Opened ${review.title} evidence ${selectedEvidenceId}: ${counts.accepted} accepted, ${counts.rejected} rejected, ${counts.new} undecided findings.${screenshotNote}` }],
       _meta: {
         web_review: {
           review: { id: review.id, title: review.title, targetUrl: review.targetUrl, status: review.status },
@@ -330,7 +333,7 @@ export function registerWebReviewTools(server, { store, evidenceStore, findingSt
 
   registerAppTool(server, "get_web_evidence", {
     title: "Read browser evidence",
-    description: "Read structured evidence from a previous Web Review capture. Returns visible DOM and geometry records plus browser errors; optionally returns the screenshot again.",
+    description: "Read structured evidence from a previous Web Review capture. DOM/geometry evidence remains available after screenshot retention; an expired screenshot is reported explicitly instead of being fabricated.",
     inputSchema: {
       evidence_id: z.string().min(1),
       max_elements: z.number().int().min(1).max(200).default(80),
@@ -358,12 +361,13 @@ export function registerWebReviewTools(server, { store, evidenceStore, findingSt
       console_errors: z.array(z.string()),
       network_errors: z.array(z.object({ url: z.string(), error: z.string() })),
       truncated: z.boolean(),
+      screenshot_available: z.boolean(),
     },
     securitySchemes: NOAUTH,
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     _meta: { securitySchemes: NOAUTH, ui: { visibility: ["model"] } },
   }, async ({ evidence_id, max_elements, include_screenshot }) => {
-    const evidence = evidenceStore.get(evidence_id, { includeScreenshot: include_screenshot });
+    const evidence = evidenceStore.get(evidence_id, { includeScreenshot: include_screenshot, allowMissingScreenshot: true });
     const summary = evidenceStore.summary(evidence_id);
     const structure = evidence.structure.slice(0, max_elements);
     const structuredContent = {
@@ -373,8 +377,12 @@ export function registerWebReviewTools(server, { store, evidenceStore, findingSt
       console_errors: evidence.consoleErrors,
       network_errors: evidence.networkErrors,
       truncated: evidence.structure.length > structure.length,
+      screenshot_available: evidence.screenshotAvailable,
     };
-    const content = [{ type: "text", text: `Loaded evidence ${evidence_id}. Showing ${structure.length} of ${evidence.structure.length} visible elements.` }];
+    const availabilityText = include_screenshot && !evidence.screenshotAvailable
+      ? " Screenshot artifact is no longer retained; structured evidence remains available and fresh capture is required for visual analysis."
+      : "";
+    const content = [{ type: "text", text: `Loaded evidence ${evidence_id}. Showing ${structure.length} of ${evidence.structure.length} visible elements.${availabilityText}` }];
     if (include_screenshot && evidence.screenshotBase64) {
       content.push({ type: "image", data: evidence.screenshotBase64, mimeType: evidence.screenshotMimeType });
     }
