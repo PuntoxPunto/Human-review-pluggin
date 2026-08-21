@@ -41,7 +41,7 @@ window.addEventListener("message", (event) => {
 const bridgeReady = (async () => {
   try {
     await rpcRequest("ui/initialize", {
-      appInfo: { name: "web-review-widget", version: "0.4.0" },
+      appInfo: { name: "web-review-widget", version: "0.5.0" },
       appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
       protocolVersion: "2026-01-26",
     });
@@ -115,9 +115,17 @@ function activeFinding() {
 function render() {
   const evidence = state.evidence;
   if (!evidence) return;
+  const hasScreenshot = Boolean(evidence.screenshotAvailable !== false && evidence.screenshotBase64);
   $("title").textContent = state.review?.title || evidence.title || "Web Review";
-  $("meta").textContent = `${evidence.finalUrl} · ${evidence.viewport.width}×${evidence.viewport.height} · evidence ${evidence.id}`;
-  $("shot").src = `data:${evidence.screenshotMimeType || "image/png"};base64,${evidence.screenshotBase64}`;
+  $("meta").textContent = `${evidence.finalUrl} · ${evidence.viewport.width}×${evidence.viewport.height} · evidence ${evidence.id}${hasScreenshot ? "" : " · metadata only"}`;
+  $("shot").hidden = !hasScreenshot;
+  $("shotMissing").hidden = hasScreenshot;
+  if (hasScreenshot) {
+    $("shot").src = `data:${evidence.screenshotMimeType || "image/png"};base64,${evidence.screenshotBase64}`;
+  } else {
+    $("shot").removeAttribute("src");
+    $("overlay").innerHTML = "";
+  }
   $("sendDecisions").disabled = false;
   const counts = findingCounts();
   $("counts").innerHTML = [
@@ -125,6 +133,7 @@ function render() {
     counts.deterministic ? `<span class="pill">${counts.deterministic} deterministic</span>` : "",
     counts.visual_critic ? `<span class="pill">${counts.visual_critic} visual</span>` : "",
     counts.reference_critic ? `<span class="pill">${counts.reference_critic} baseline</span>` : "",
+    !hasScreenshot ? '<span class="pill">screenshot expired</span>' : "",
     counts.error ? `<span class="pill">${counts.error} error</span>` : "",
     counts.warning ? `<span class="pill">${counts.warning} warning</span>` : "",
     counts.accepted ? `<span class="pill">${counts.accepted} accepted</span>` : "",
@@ -227,7 +236,7 @@ function renderOverlay() {
   const evidence = state.evidence;
   const image = $("shot");
   const overlay = $("overlay");
-  if (!evidence || !image.clientWidth || !image.clientHeight) {
+  if (!evidence?.screenshotBase64 || evidence.screenshotAvailable === false || image.hidden || !image.clientWidth || !image.clientHeight) {
     overlay.innerHTML = "";
     return;
   }
@@ -253,7 +262,10 @@ async function sendDecisions() {
   const button = $("sendDecisions");
   button.disabled = true;
   button.textContent = "Sending…";
-  const prompt = `Read Web Review findings for evidence ${state.evidence.id}. Act only on accepted findings and explicit human comments. Do not apply rejected findings. Preserve immutable browser evidence and respect provenance: deterministic measurements are observations; visual_critic findings are single-state perceptual proposals; reference_critic findings are baseline-regression interpretations where a measured difference is not automatically a defect. Human decisions override model assumptions.`;
+  const screenshotStatus = state.evidence.screenshotAvailable === false
+    ? " The screenshot artifact has expired, so do not make fresh visual claims from this evidence; use retained DOM/geometry/findings only or capture fresh evidence."
+    : "";
+  const prompt = `Read Web Review findings for evidence ${state.evidence.id}. Act only on accepted findings and explicit human comments. Do not apply rejected findings. Preserve immutable browser evidence and respect provenance: deterministic measurements are observations; visual_critic findings are single-state perceptual proposals; reference_critic findings are baseline-regression interpretations where a measured difference is not automatically a defect. Human decisions override model assumptions.${screenshotStatus}`;
   try {
     if (window.openai?.sendFollowUpMessage) {
       await window.openai.sendFollowUpMessage({ prompt, scrollToBottom: true });
