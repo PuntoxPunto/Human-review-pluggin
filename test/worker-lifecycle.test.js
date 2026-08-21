@@ -64,7 +64,7 @@ test("worker becomes unready, rejects new jobs and force-drains active browser p
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  t.after(() => { if (!worker.killed) worker.kill("SIGKILL"); });
+  t.after(() => { if (worker.exitCode === null && worker.signalCode === null) worker.kill("SIGKILL"); });
 
   let stdout = "";
   worker.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
