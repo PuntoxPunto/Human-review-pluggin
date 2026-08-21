@@ -152,9 +152,10 @@ export class EvidenceStore {
     return [...this.#evidence.keys()].map((id) => this.get(id));
   }
 
-  pruneScreenshots({ olderThanMs = 30 * 24 * 60 * 60 * 1000, keepLatestPerReview = 5, dryRun = true, now = Date.now() } = {}) {
+  pruneScreenshots({ olderThanMs = 30 * 24 * 60 * 60 * 1000, keepLatestPerReview = 5, protectedEvidenceIds = [], dryRun = true, now = Date.now() } = {}) {
     const retentionMs = Math.max(0, Number(olderThanMs) || 0);
     const keepLatest = Math.max(0, Math.min(100, Number(keepLatestPerReview) || 0));
+    const canonicalProtected = new Set([...protectedEvidenceIds].map(String));
     const currentTime = now instanceof Date ? now.getTime() : Number(now);
     if (!Number.isFinite(currentTime)) throw new Error("Retention now must be a valid timestamp.");
 
@@ -172,13 +173,18 @@ export class EvidenceStore {
     }
 
     const candidates = [];
-    let protectedCount = 0;
+    let localProtectedCount = 0;
+    let canonicalProtectedCount = 0;
     let youngCount = 0;
     let latestCount = 0;
     for (const item of evidence) {
       const protections = item.screenshotProtection || [];
       if (protections.length) {
-        protectedCount += 1;
+        localProtectedCount += 1;
+        continue;
+      }
+      if (canonicalProtected.has(item.id)) {
+        canonicalProtectedCount += 1;
         continue;
       }
       if (latestProtected.has(item.id)) {
@@ -216,7 +222,9 @@ export class EvidenceStore {
       keep_latest_per_review: keepLatest,
       screenshot_count: evidence.length,
       candidate_count: candidates.length,
-      protected_count: protectedCount,
+      protected_count: localProtectedCount + canonicalProtectedCount,
+      local_protected_count: localProtectedCount,
+      canonical_protected_count: canonicalProtectedCount,
       latest_kept_count: latestCount,
       young_kept_count: youngCount,
       pruned_count: prunedCount,
