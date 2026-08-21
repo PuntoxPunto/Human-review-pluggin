@@ -3,6 +3,14 @@ import { FindingStore } from "./finding-store.js";
 import { ReferenceComparisonStore } from "./reference-store.js";
 import { FixPlanStore } from "./fix-plan-store.js";
 
+function boundedInteger(value, { name, min, max }) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${name} must be an integer between ${min} and ${max}.`);
+  }
+  return parsed;
+}
+
 export function collectProtectedEvidenceIds({ findingStore, referenceStore, fixPlanStore }) {
   const protectedIds = new Set();
   for (const id of findingStore.referencedEvidenceIds()) protectedIds.add(id);
@@ -21,8 +29,8 @@ export function runArtifactRetention({
   dryRun = true,
   now = Date.now(),
 } = {}) {
-  const days = Math.max(0, Math.min(3650, Number(retentionDays) || 0));
-  const keepLatest = Math.max(0, Math.min(100, Number(keepLatestPerReview) || 0));
+  const days = boundedInteger(retentionDays, { name: "retentionDays", min: 0, max: 3650 });
+  const keepLatest = boundedInteger(keepLatestPerReview, { name: "keepLatestPerReview", min: 0, max: 100 });
   const protectedEvidenceIds = collectProtectedEvidenceIds({ findingStore, referenceStore, fixPlanStore });
   const result = evidenceStore.pruneScreenshots({
     olderThanMs: days * 24 * 60 * 60 * 1000,
