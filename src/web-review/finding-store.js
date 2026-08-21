@@ -64,6 +64,14 @@ export class FindingStore {
     return clone(finding);
   }
 
+  referencedEvidenceIds() {
+    const ids = [];
+    for (const [evidenceId, findings] of this.#byEvidence.entries()) {
+      if (Array.isArray(findings) && findings.length) ids.push(evidenceId);
+    }
+    return ids;
+  }
+
   decide(evidenceId, findingId, { status, comment = "" }) {
     if (!["new", "accepted", "rejected"].includes(status)) {
       throw new Error("Finding status must be new, accepted, or rejected.");
