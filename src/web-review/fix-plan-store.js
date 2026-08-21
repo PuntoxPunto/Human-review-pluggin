@@ -55,6 +55,21 @@ export class FixPlanStore {
     return clone(attempt);
   }
 
+  referencedEvidenceIds() {
+    const ids = new Set();
+    for (const plan of this.#plans.values()) {
+      if (plan.evidenceId) ids.add(plan.evidenceId);
+      for (const item of plan.items || []) {
+        if (item.referenceEvidenceId) ids.add(item.referenceEvidenceId);
+      }
+      for (const attempt of plan.attempts || []) {
+        if (attempt.baseEvidenceId) ids.add(attempt.baseEvidenceId);
+        if (attempt.postFixEvidenceId) ids.add(attempt.postFixEvidenceId);
+      }
+    }
+    return [...ids];
+  }
+
   addAttempt(id, attempt) {
     const plan = this.#plans.get(id);
     if (!plan) throw new Error(`Fix plan ${id} was not found.`);
