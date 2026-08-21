@@ -11,6 +11,8 @@ const SAFE_ENV_KEYS = [
   "http_proxy", "https_proxy", "no_proxy", "NODE_ENV",
   "BROWSER_JOB_TEST_DELAY_MS", "BROWSER_JOB_MAX_INPUT_BYTES",
 ];
+const activeChildren = new Set();
+const externallyTerminated = new WeakSet();
 
 export function createBrowserJobEnvironment({ allowPrivate = false, baseEnv = process.env } = {}) {
   const env = {};
@@ -32,6 +34,20 @@ function killBrowserJobTree(child) {
   try { child.kill("SIGKILL"); } catch {}
 }
 
+export function terminateActiveBrowserJobs() {
+  let terminated = 0;
+  for (const child of activeChildren) {
+    externallyTerminated.add(child);
+    killBrowserJobTree(child);
+    terminated += 1;
+  }
+  return terminated;
+}
+
+export function getActiveBrowserJobProcessCount() {
+  return activeChildren.size;
+}
+
 export function runBrowserJobProcess({ operation, payload, allowPrivate = false, hardTimeoutMs = DEFAULT_HARD_TIMEOUT_MS, maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES } = {}) {
   const boundedTimeout = Math.max(1_000, Math.min(180_000, Number(hardTimeoutMs) || DEFAULT_HARD_TIMEOUT_MS));
   const boundedOutput = Math.max(1_048_576, Math.min(64 * 1024 * 1024, Number(maxOutputBytes) || DEFAULT_MAX_OUTPUT_BYTES));
@@ -43,6 +59,7 @@ export function runBrowserJobProcess({ operation, payload, allowPrivate = false,
       stdio: ["pipe", "pipe", "pipe"],
       detached,
     });
+    activeChildren.add(child);
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
     let settled = false;
@@ -73,12 +90,17 @@ export function runBrowserJobProcess({ operation, payload, allowPrivate = false,
       if (stderr.length < 8192) stderr = Buffer.concat([stderr, chunk]).subarray(0, 8192);
     });
     child.once("error", (error) => {
+      activeChildren.delete(child);
       clearTimeout(timer);
       finishReject(Object.assign(new Error(`Browser job process failed to start: ${error.message}`), { statusCode: 502, code: "BROWSER_JOB_SPAWN_ERROR" }));
     });
     child.once("close", () => {
+      activeChildren.delete(child);
       clearTimeout(timer);
       if (settled) return;
+      if (externallyTerminated.has(child)) {
+        return finishReject(Object.assign(new Error("Browser job was terminated while the worker was draining."), { statusCode: 503, code: "BROWSER_JOB_DRAIN_TERMINATED" }));
+      }
       if (timedOut) {
         return finishReject(Object.assign(new Error(`Browser job exceeded hard timeout of ${boundedTimeout}ms.`), { statusCode: 504, code: "BROWSER_JOB_HARD_TIMEOUT" }));
       }
@@ -102,6 +124,7 @@ export function runBrowserJobProcess({ operation, payload, allowPrivate = false,
     try {
       child.stdin.end(JSON.stringify({ operation, payload }));
     } catch (error) {
+      activeChildren.delete(child);
       clearTimeout(timer);
       killBrowserJobTree(child);
       finishReject(Object.assign(new Error(`Could not send browser job payload: ${error.message}`), { statusCode: 500, code: "BROWSER_JOB_INPUT_ERROR" }));
