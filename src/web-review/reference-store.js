@@ -28,4 +28,13 @@ export class ReferenceComparisonStore {
     if (!comparison) throw new Error(`Reference comparison ${id} was not found.`);
     return clone(comparison);
   }
+
+  referencedEvidenceIds() {
+    const ids = new Set();
+    for (const comparison of this.#comparisons.values()) {
+      if (comparison.referenceEvidenceId) ids.add(comparison.referenceEvidenceId);
+      if (comparison.candidateEvidenceId) ids.add(comparison.candidateEvidenceId);
+    }
+    return [...ids];
+  }
 }
