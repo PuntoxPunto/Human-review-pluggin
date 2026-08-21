@@ -15,5 +15,6 @@ USER pwuser
 ENV NODE_ENV=production
 ENV PORT=8890
 EXPOSE 8890
+STOPSIGNAL SIGTERM
 
 CMD ["node", "browser-worker.js"]
